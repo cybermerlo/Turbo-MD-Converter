@@ -1,0 +1,10 @@
+# Normalizza i line ending: CRLF in working copy su Windows
+* text=auto eol=crlf
+
+# Mantieni binari senza conversione
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary

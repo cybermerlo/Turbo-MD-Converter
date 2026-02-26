@@ -1,0 +1,27 @@
+# File con nome riservato Windows (Git non può tracciarlo)
+/nul
+
+# Ambiente e segreti
+.env
+.env.local
+*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Build e distribuzione
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Output e cache
+output/
+*.log

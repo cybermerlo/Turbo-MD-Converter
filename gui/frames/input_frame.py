@@ -20,6 +20,11 @@ class InputFrame(ctk.CTkFrame):
             font=ctk.CTkFont(size=14, weight="bold"),
         )
         self.title_label.pack(padx=10, pady=(10, 5), anchor="w")
+        ctk.CTkLabel(
+            self, text="Trascina qui i file PDF o usa i pulsanti sotto",
+            font=ctk.CTkFont(size=11),
+            text_color="gray",
+        ).pack(padx=10, pady=(0, 5), anchor="w")
 
         # Buttons frame
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -97,6 +102,16 @@ class InputFrame(ctk.CTkFrame):
     def get_pdf_paths(self) -> list[Path]:
         """Return currently selected PDF paths."""
         return list(self._pdf_paths)
+
+    def add_paths(self, paths: list[Path]) -> None:
+        """Add PDF paths (e.g. from drag & drop). Skips non-PDF and duplicates."""
+        for path in paths:
+            path = Path(path)
+            if path.suffix.lower() != ".pdf":
+                continue
+            if path not in self._pdf_paths:
+                self._pdf_paths.append(path)
+        self._refresh_list()
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable/disable file selection buttons."""

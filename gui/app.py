@@ -5,6 +5,7 @@ import queue
 from pathlib import Path
 
 import customtkinter as ctk
+from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from config.settings import AppConfig, load_config, save_config
 from gui.frames.input_frame import InputFrame
@@ -26,11 +27,12 @@ from pipeline.events import (
 from pipeline.worker import PipelineWorker
 
 
-class OCRLangExtractApp(ctk.CTk):
+class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """Main application window."""
 
     def __init__(self, config: AppConfig):
         super().__init__()
+        self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("OCR + LangExtract - Analisi Documenti Legali")
         self.geometry("1100x750")
@@ -43,6 +45,7 @@ class OCRLangExtractApp(ctk.CTk):
         self.worker: PipelineWorker | None = None
 
         self._build_layout()
+        self._setup_drag_drop()
         self._start_queue_polling()
 
     def _build_layout(self) -> None:
@@ -137,6 +140,24 @@ class OCRLangExtractApp(ctk.CTk):
         self.log_frame.grid(row=2, column=0, sticky="ew", pady=(5, 0))
 
         right.grid_columnconfigure(0, weight=1)
+
+    def _setup_drag_drop(self) -> None:
+        """Register the PDF input area as drag & drop target for files."""
+        self.input_frame.drop_target_register(DND_FILES)
+        self.input_frame.dnd_bind("<<Drop>>", self._on_drop_files)
+
+    def _on_drop_files(self, event) -> None:
+        """Handle files dropped on the input frame (only PDFs are added)."""
+        if not event.data:
+            return
+        try:
+            raw = event.data.strip().strip("{}")
+            paths = self.tk.splitlist(raw) if raw else []
+        except Exception:
+            paths = [event.data.replace("{", "").replace("}", "").strip()]
+        path_objs = [Path(p) for p in paths if p]
+        self.input_frame.add_paths(path_objs)
+        return event.action
 
     def _start_queue_polling(self) -> None:
         """Poll the event queue every 100ms."""

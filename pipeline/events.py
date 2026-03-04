@@ -73,3 +73,11 @@ class LogEvent(PipelineEvent):
     """Generic log message event."""
     message: str = ""
     level: str = "INFO"
+
+
+@dataclass
+class PageSkippedEvent(PipelineEvent):
+    """Emitted when a page OCR produces no text (e.g. RECITATION block)."""
+    page_num: int = 0
+    total_pages: int = 0
+    reason: str = ""

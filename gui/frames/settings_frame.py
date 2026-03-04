@@ -5,7 +5,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from config.defaults import DEFAULT_OCR_PROMPT, SCHEMA_PRESET_NAMES
+from config.defaults import DEFAULT_OCR_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_OCR_MODELS
 from config.settings import AppConfig
 
 
@@ -83,6 +83,18 @@ class SettingsWindow(ctk.CTkToplevel):
             command=self._reset_ocr_prompt, width=140,
             fg_color="gray40", hover_color="gray30",
         ).pack(side="left")
+
+        # Model selector
+        model_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        model_frame.pack(padx=10, pady=5, fill="x")
+
+        ctk.CTkLabel(model_frame, text="Modello OCR:").pack(side="left", padx=(0, 10))
+        self.ocr_model_menu = ctk.CTkOptionMenu(
+            model_frame, values=AVAILABLE_OCR_MODELS, width=250,
+        )
+        current_model = self.config.ocr_model_id if self.config.ocr_model_id in AVAILABLE_OCR_MODELS else AVAILABLE_OCR_MODELS[0]
+        self.ocr_model_menu.set(current_model)
+        self.ocr_model_menu.pack(side="left")
 
         # DPI slider
         dpi_frame = ctk.CTkFrame(tab, fg_color="transparent")
@@ -198,6 +210,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.gemini_api_key = self.api_key_entry.get().strip()
         self.config.langextract_api_key = self.config.gemini_api_key
         self.config.ocr_prompt = self.ocr_prompt_text.get("1.0", "end").strip()
+        self.config.ocr_model_id = self.ocr_model_menu.get()
         self.config.page_dpi = int(self.dpi_slider.get())
         self.config.active_schema = self.schema_menu.get()
         self.config.extraction_passes = int(self.passes_slider.get())

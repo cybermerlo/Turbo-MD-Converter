@@ -42,22 +42,51 @@ class GeminiOCR:
             GeminiOCRError: If the API call fails.
         """
         try:
-            response = self.client.models.generate_content(
+            # Configure safety settings to avoid blocking on sensitive financial documents
+            safety_settings = [
+                types.SafetySetting(category=cat, threshold="BLOCK_NONE")
+                for cat in [
+                    "HARM_CATEGORY_HATE_SPEECH",
+                    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "HARM_CATEGORY_HARASSMENT",
+                    "HARM_CATEGORY_DANGEROUS_CONTENT",
+                ]
+            ]
+            config = types.GenerateContentConfig(safety_settings=safety_settings)
+
+            stream_response = self.client.models.generate_content_stream(
                 model=self.model_id,
                 contents=[
                     types.Part.from_text(text=self.ocr_prompt),
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 ],
+                config=config,
             )
 
-            text = response.text or ""
-
-            # Extract token usage from response
+            text_chunks = []
             input_tokens = 0
             output_tokens = 0
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                input_tokens = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-                output_tokens = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+
+            for chunk in stream_response:
+                if chunk.text:
+                    text_chunks.append(chunk.text)
+                
+                if not chunk.text and hasattr(chunk, "candidates") and chunk.candidates:
+                    candidate = chunk.candidates[0]
+                    finish_reason = getattr(candidate, "finish_reason", "UNKNOWN")
+                    # Log only if it stops unexpectedly
+                    if finish_reason and str(finish_reason) not in ("UNKNOWN", "STOP", "FinishReason.STOP"):
+                        logger.warning(
+                            "Attenzione: Chunk della pagina %d ha restituito testo vuoto. Finish reason: %s. "
+                            "Safety ratings: %s", 
+                            page_num + 1, finish_reason, getattr(candidate, "safety_ratings", "N/A")
+                        )
+
+                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
+                    input_tokens = getattr(chunk.usage_metadata, "prompt_token_count", input_tokens) or input_tokens
+                    output_tokens = getattr(chunk.usage_metadata, "candidates_token_count", output_tokens) or output_tokens
+
+            text = "".join(text_chunks)
 
             logger.info(
                 "Pagina %d OCR completata: %d caratteri, %d+%d tokens",

@@ -11,6 +11,12 @@ Regole:
 - Non aggiungere interpretazioni o commenti
 - Restituisci SOLO il testo trascritto"""
 
+# Available OCR models
+AVAILABLE_OCR_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+]
+
 # Page separator used when combining OCR results
 PAGE_SEPARATOR = "\n\n--- Pagina {page_num} ---\n\n"
 
@@ -20,6 +26,10 @@ PRICING = {
         "input_per_1m": 0.50,
         "output_per_1m": 3.00,
     },
+    "gemini-3.1-flash-lite-preview": {
+        "input_per_1m": 0.25,
+        "output_per_1m": 1.50,
+    },
     "gemini-2.5-flash": {
         "input_per_1m": 0.15,
         "output_per_1m": 0.60,
@@ -27,4 +37,4 @@ PRICING = {
 }
 
 # Available schema preset names
-SCHEMA_PRESET_NAMES = ["full_legal", "parties_dates", "invoice", "none", "custom"]
+SCHEMA_PRESET_NAMES = ["full_legal", "parties_dates", "invoice", "estratto_conto", "none", "custom"]

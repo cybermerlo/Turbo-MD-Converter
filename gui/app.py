@@ -1,12 +1,12 @@
-"""Main application window."""
-
 import json
 import queue
+import tkinter as tk
 from pathlib import Path
 
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
+from config.defaults import AVAILABLE_OCR_MODELS
 from config.settings import AppConfig, load_config, save_config
 from gui.frames.input_frame import InputFrame
 from gui.frames.log_frame import LogFrame
@@ -21,6 +21,7 @@ from pipeline.events import (
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
+    PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
 )
@@ -83,7 +84,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.input_frame = InputFrame(left, on_files_changed=self._on_files_changed)
         self.input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
 
-        # Output format
+        # Output format label (solo Markdown)
         self.output_frame_options = ctk.CTkFrame(left)
         self.output_frame_options.grid(row=1, column=0, sticky="ew", pady=5)
 
@@ -93,14 +94,22 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(format_row, text="Formato:", font=ctk.CTkFont(weight="bold")).pack(
             side="left", padx=(0, 10)
         )
-        self.md_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(format_row, text="Markdown", variable=self.md_var).pack(
+        ctk.CTkLabel(format_row, text="Markdown").pack(side="left")
+
+        # OCR Model selector
+        model_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
+        model_row.pack(padx=10, pady=(0, 5), fill="x")
+
+        ctk.CTkLabel(model_row, text="Modello OCR:", font=ctk.CTkFont(weight="bold")).pack(
             side="left", padx=(0, 10)
         )
-        self.json_var = ctk.BooleanVar(value=True)
-        ctk.CTkCheckBox(format_row, text="JSON", variable=self.json_var).pack(
-            side="left"
+        self.model_var = ctk.StringVar(
+            value=self.config.ocr_model_id if self.config.ocr_model_id in AVAILABLE_OCR_MODELS else AVAILABLE_OCR_MODELS[0]
         )
+        ctk.CTkOptionMenu(
+            model_row, values=AVAILABLE_OCR_MODELS,
+            variable=self.model_var, width=230,
+        ).pack(side="left")
 
         # Action buttons
         btn_frame = ctk.CTkFrame(left)
@@ -187,6 +196,18 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         elif isinstance(event, ExtractionCompleteEvent):
             self.progress_frame.update_extraction_complete(event.extraction_count)
 
+        elif isinstance(event, PageSkippedEvent):
+            msg = (
+                f"⚠️  PAGINA {event.page_num + 1}/{event.total_pages} SALTATA\n"
+                f"Motivo: {event.reason}"
+            )
+            self.log_frame.append(msg, "WARNING")
+            # Show a popup warning (non-blocking)
+            self.after(0, lambda m=msg: tk.messagebox.showwarning(
+                title="Pagina saltata",
+                message=m,
+            ))
+
         elif isinstance(event, OutputWrittenEvent):
             if event.file_paths:
                 self.output_frame.set_output_dir(event.file_paths[0].parent)
@@ -233,16 +254,11 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             )
             return
 
-        # Update output formats from checkboxes
-        formats = []
-        if self.md_var.get():
-            formats.append("markdown")
-        if self.json_var.get():
-            formats.append("json")
-        if not formats:
-            self.log_frame.append("Seleziona almeno un formato di output.", "WARNING")
-            return
-        self.config.output_formats = formats
+        # Update model from selector
+        self.config.ocr_model_id = self.model_var.get()
+
+        # Output format is always markdown
+        self.config.output_formats = ["markdown"]
 
         # Reset UI
         self.progress_frame.reset()

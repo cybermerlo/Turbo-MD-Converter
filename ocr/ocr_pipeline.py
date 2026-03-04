@@ -57,6 +57,7 @@ class OCRPipeline:
         self,
         pdf_path: Path,
         on_page_complete: Callable[[int, int, bool], None] | None = None,
+        on_page_skipped: Callable[[int, int, str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> OCRResult:
         """Process all pages of a PDF sequentially.
@@ -64,6 +65,7 @@ class OCRPipeline:
         Args:
             pdf_path: Path to the PDF file.
             on_page_complete: Callback(page_num, total_pages, success) after each page.
+            on_page_skipped: Callback(page_num, total_pages, reason) when page text is empty.
             cancel_event: Threading event to signal cancellation.
 
         Returns:
@@ -87,6 +89,13 @@ class OCRPipeline:
             if page_result.success:
                 result.successful_pages += 1
                 page_texts.append(page_result.text)
+                # Warn if page was processed but returned no text
+                if not page_result.text.strip() and on_page_skipped:
+                    logger.warning(
+                        "⚠️  PAGINA %d SALTATA - Nessun testo estratto (possibile blocco RECITATION)",
+                        page_num + 1,
+                    )
+                    on_page_skipped(page_num, total_pages, "Nessun testo estratto (RECITATION o pagina vuota)")
             else:
                 page_texts.append(f"[Pagina {page_num + 1}: OCR non riuscito]")
 

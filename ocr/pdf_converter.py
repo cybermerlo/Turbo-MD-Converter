@@ -36,7 +36,7 @@ class PDFConverter:
         doc = fitz.open(str(pdf_path))
         try:
             page = doc.load_page(page_num)
-            pixmap = page.get_pixmap(dpi=self.dpi)
+            pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
             img_bytes = pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
             return img_bytes
         finally:
@@ -54,7 +54,7 @@ class PDFConverter:
             logger.info("PDF '%s': %d pagine da convertire", pdf_path.name, total)
             for i in range(total):
                 page = doc.load_page(i)
-                pixmap = page.get_pixmap(dpi=self.dpi)
+                pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
                 img_bytes = pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
                 logger.debug("Pagina %d/%d convertita (%d bytes)", i + 1, total, len(img_bytes))
                 yield (i, img_bytes)

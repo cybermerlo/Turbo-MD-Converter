@@ -20,6 +20,7 @@ from pipeline.events import (
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
+    PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
 )
@@ -69,6 +70,7 @@ class DocumentProcessor:
             ocr_result = self.ocr_pipeline.process_pdf(
                 pdf_path=pdf_path,
                 on_page_complete=self._on_ocr_page,
+                on_page_skipped=self._on_page_skipped,
                 cancel_event=cancel_event,
             )
         except Exception as e:
@@ -149,19 +151,7 @@ class DocumentProcessor:
                 source_filename=pdf_path.name,
                 total_pages=ocr_result.total_pages,
                 ocr_text=ocr_result.combined_text if self.config.include_ocr_text_in_output else None,
-                cost_info=None,  # Non includere cost_info nell'output
-            )
-
-        if "json" in self.config.output_formats:
-            extraction_model = self.config.extraction_model_id if self.extractor else ""
-            json_data = self.json_formatter.format(
-                extractions=extractions,
-                source_filename=pdf_path.name,
-                ocr_text=ocr_result.combined_text,
-                total_pages=ocr_result.total_pages,
-                ocr_model=self.config.ocr_model_id,
-                extraction_model=extraction_model,
-                cost_info=None,  # Non includere cost_info nell'output
+                cost_info=None,
             )
 
         try:
@@ -263,4 +253,12 @@ class DocumentProcessor:
             input_tokens=in_tok,
             output_tokens=out_tok,
             page_cost=cost,
+        ))
+
+    def _on_page_skipped(self, page_num: int, total_pages: int, reason: str) -> None:
+        """Callback from OCR pipeline when a page returns empty text."""
+        self.emit(PageSkippedEvent(
+            page_num=page_num,
+            total_pages=total_pages,
+            reason=reason,
         ))

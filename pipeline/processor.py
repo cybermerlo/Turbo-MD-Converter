@@ -44,6 +44,9 @@ class DocumentProcessor:
         self.ocr_pipeline = OCRPipeline(config, self.cost_tracker)
 
         schema = get_schema_preset(config.active_schema)
+        # Apply custom prompt override if the user edited the schema
+        if schema and config.custom_schema_prompts.get(config.active_schema):
+            schema.prompt_description = config.custom_schema_prompts[config.active_schema]
         self.extractor = LegalExtractor(config, schema, self.cost_tracker) if schema else None
 
         self.md_formatter = MarkdownFormatter()

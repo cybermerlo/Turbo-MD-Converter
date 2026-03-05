@@ -439,18 +439,29 @@ def build_bank_statement_schema() -> SchemaPreset:
 
     prompt_description = textwrap.dedent("""\
         Estrai informazioni strutturate da questo estratto conto bancario italiano.
-        Identifica e classifica in ordine di apparizione:
+        Il documento puo' contenere PIU' estratti conto consecutivi (pagine diverse).
+        Identifica e classifica:
 
-        - BANCA: nome dell'istituto bancario
-        - TITOLARE: nome del correntista intestatario del conto
-        - CONTO: numero di conto corrente (e IBAN se presente)
-        - ESTRATTO_CONTO: numero e periodo del rendiconto (es. N. 003/2024)
-        - SALDO_INIZIALE: saldo all'inizio del periodo con data di riferimento
-        - SALDO_FINALE: saldo al termine del periodo con data di riferimento
+        - BANCA: nome dell'istituto bancario (estrailo UNA SOLA VOLTA, anche se
+          appare in piu' pagine come intestazione ripetuta)
+        - TITOLARE: nome del correntista intestatario del conto (UNA SOLA VOLTA)
+        - CONTO: numero di conto corrente e IBAN (UNA SOLA VOLTA, anche se ripetuto
+          in piu' pagine)
+        - ESTRATTO_CONTO: numero e periodo di OGNI rendiconto (es. N. 003/2024).
+          Estraili tutti perche' ogni estratto ha numero e periodo diverso.
+        - SALDO_INIZIALE: saldo all'inizio di OGNI periodo (uno per estratto conto)
+        - SALDO_FINALE: saldo al termine di OGNI periodo (uno per estratto conto).
+          Negli attributi includi il numero dell'estratto conto di riferimento.
         - MOVIMENTO: ogni singolo movimento del conto (addebito o accredito),
           con data operazione, data valuta, descrizione, importo e tipo (addebito/accredito)
-        - TOTALE_ADDEBITI: totale degli addebiti del periodo
-        - TOTALE_ACCREDITI: totale degli accrediti del periodo
+        - TOTALE_ADDEBITI: totale degli addebiti di OGNI periodo
+        - TOTALE_ACCREDITI: totale degli accrediti di OGNI periodo
+
+        IMPORTANTE - Regole di deduplicazione:
+        - Dati fissi (banca, titolare, conto): estraili UNA SOLA VOLTA.
+          Non ripetere la stessa entita' solo perche' appare in piu' pagine.
+        - Dati variabili (estratto_conto, saldi, movimenti, totali): estraili
+          tutti perche' sono diversi per ogni periodo.
 
         Usa il testo esatto dal documento per ogni estrazione.
         Non parafrasare e non sovrapporre le entita'.
@@ -499,7 +510,8 @@ def build_bank_statement_schema() -> SchemaPreset:
         lx.data.Extraction(
             extraction_class="saldo_iniziale",
             extraction_text="+ 3.086,87",
-            attributes={"data": "30.06.2024", "valuta": "EUR", "segno": "credito"},
+            attributes={"data": "30.06.2024", "valuta": "EUR", "segno": "credito",
+                         "estratto_conto_ref": "003/2024"},
         ),
         lx.data.Extraction(
             extraction_class="movimento",
@@ -557,7 +569,8 @@ def build_bank_statement_schema() -> SchemaPreset:
         lx.data.Extraction(
             extraction_class="saldo_finale",
             extraction_text="+ 3.809,75",
-            attributes={"data": "30.09.2024", "valuta": "EUR", "segno": "credito"},
+            attributes={"data": "30.09.2024", "valuta": "EUR", "segno": "credito",
+                         "estratto_conto_ref": "003/2024"},
         ),
     ]
 
@@ -585,9 +598,31 @@ _SCHEMA_REGISTRY: dict[str, callable] = {
 }
 
 
+def build_custom_schema() -> SchemaPreset:
+    """Empty custom schema that users can configure via the settings editor."""
+    prompt_description = textwrap.dedent("""\
+        Estrai informazioni strutturate da questo documento.
+        Identifica e classifica le entita' principali presenti nel testo.
+
+        Usa il testo esatto dal documento per ogni estrazione.
+        Non parafrasare e non sovrapporre le entita'.
+        Fornisci attributi significativi per aggiungere contesto a ogni estrazione.""")
+
+    return SchemaPreset(
+        name="custom",
+        description="Schema personalizzato (configurabile nelle impostazioni)",
+        prompt_description=prompt_description,
+        examples=[],
+    )
+
+
+# Add custom to the registry
+_SCHEMA_REGISTRY["custom"] = build_custom_schema
+
+
 def get_schema_preset(name: str) -> SchemaPreset | None:
     """Get a schema preset by name.
-    
+
     Returns None if name is "none" (no structured extraction).
 
     Raises:
@@ -595,7 +630,7 @@ def get_schema_preset(name: str) -> SchemaPreset | None:
     """
     if name == "none":
         return None
-    
+
     builder = _SCHEMA_REGISTRY.get(name)
     if not builder:
         available = ", ".join(_SCHEMA_REGISTRY.keys())

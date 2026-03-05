@@ -28,7 +28,7 @@ class OutputFrame(ctk.CTkFrame):
         )
         self.md_check.pack(side="left", padx=(0, 10))
 
-        self.json_var = ctk.BooleanVar(value=True)
+        self.json_var = ctk.BooleanVar(value=False)
         self.json_check = ctk.CTkCheckBox(
             format_frame, text="JSON", variable=self.json_var,
         )

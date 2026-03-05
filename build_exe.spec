@@ -5,6 +5,7 @@ PyInstaller spec file per creare l'eseguibile Windows.
 
 import sys
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 # Percorso del progetto (SPECPATH è definito da PyInstaller)
 try:
@@ -24,11 +25,10 @@ a = Analysis(
         'customtkinter.windows.ctk_tk',
         'customtkinter.windows.ctk_frame',
         'PIL._tkinter_finder',
-        'langextract',
         'google.genai',
         'fitz',  # PyMuPDF
         'dotenv',
-    ],
+    ] + collect_submodules('langextract'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

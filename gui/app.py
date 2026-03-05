@@ -6,7 +6,7 @@ from pathlib import Path
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from config.defaults import AVAILABLE_OCR_MODELS
+from config.defaults import AVAILABLE_OCR_MODELS, SCHEMA_PRESET_NAMES
 from config.settings import AppConfig, load_config, save_config
 from gui.frames.input_frame import InputFrame
 from gui.frames.log_frame import LogFrame
@@ -109,6 +109,19 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkOptionMenu(
             model_row, values=AVAILABLE_OCR_MODELS,
             variable=self.model_var, width=230,
+        ).pack(side="left")
+
+        # Schema selector
+        schema_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
+        schema_row.pack(padx=10, pady=(0, 5), fill="x")
+
+        ctk.CTkLabel(schema_row, text="Schema di estrazione:", font=ctk.CTkFont(weight="bold")).pack(
+            side="left", padx=(0, 10)
+        )
+        self.schema_var = ctk.StringVar(value=self.config.active_schema)
+        ctk.CTkOptionMenu(
+            schema_row, values=SCHEMA_PRESET_NAMES,
+            variable=self.schema_var, width=230,
         ).pack(side="left")
 
         # Action buttons
@@ -256,6 +269,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Update model from selector
         self.config.ocr_model_id = self.model_var.get()
+        self.config.active_schema = self.schema_var.get()
 
         # Output format is always markdown
         self.config.output_formats = ["markdown"]
@@ -300,5 +314,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""
         self.config = config
+        self.model_var.set(config.ocr_model_id)
+        self.schema_var.set(config.active_schema)
         save_config(config)
         self.log_frame.append("Impostazioni salvate")

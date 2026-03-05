@@ -130,13 +130,13 @@ class DocumentProcessor:
                     pdf_path=pdf_path, success=False,
                     cost_info=self.cost_tracker.get_totals(),
                 ))
-                return False
+                return False, self.cost_tracker.get_totals()
 
             self.emit(ExtractionCompleteEvent(extraction_count=len(extractions)))
             self.emit(LogEvent(message=f"Estratte {len(extractions)} entita'"))
 
         if cancel_event.is_set():
-            return False
+            return False, self.cost_tracker.get_totals()
 
         # Phase 3: Format and write output
         cost_info = self.cost_tracker.get_totals()
@@ -169,7 +169,7 @@ class DocumentProcessor:
                 pdf_path=pdf_path, success=False,
                 cost_info=cost_info,
             ))
-            return False
+            return False, cost_info
 
         self.emit(OutputWrittenEvent(file_paths=output_files))
         self.emit(PipelineCompleteEvent(

@@ -31,7 +31,7 @@ pyinstaller --name="OCR_LangExtract" ^
     --add-data "config;config" ^
     --hidden-import=customtkinter ^
     --hidden-import=customtkinter.windows ^
-    --hidden-import=langextract ^
+    --collect-all langextract ^
     --hidden-import=google.genai ^
     --hidden-import=fitz ^
     --hidden-import=dotenv ^

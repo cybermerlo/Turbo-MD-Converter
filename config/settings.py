@@ -20,12 +20,13 @@ class AppConfig:
     ocr_prompt: str = ""
     active_schema: str = "full_legal"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
-    extraction_passes: int = 3
+    extraction_passes: int = 1
     max_workers: int = 15
     max_char_buffer: int = 1000
     page_dpi: int = 200
     jpeg_quality: int = 85
     include_ocr_text_in_output: bool = True
+    custom_schema_prompts: dict = field(default_factory=dict)
 
 
 def get_config_dir() -> Path:

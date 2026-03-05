@@ -7,6 +7,69 @@ import customtkinter as ctk
 
 from config.defaults import DEFAULT_OCR_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_OCR_MODELS
 from config.settings import AppConfig
+from extraction.schemas import get_schema_preset, get_available_schemas
+
+
+class SchemaEditorWindow(ctk.CTkToplevel):
+    """Window for editing a schema's prompt description."""
+
+    def __init__(self, master, schema_name: str, prompt_text: str,
+                 on_save: callable):
+        super().__init__(master)
+        self.title(f"Editor Schema: {schema_name}")
+        self.geometry("700x550")
+        self.resizable(True, True)
+        self.transient(master)
+        self.grab_set()
+
+        self.schema_name = schema_name
+        self.on_save = on_save
+
+        # Header
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(padx=15, pady=(15, 5), fill="x")
+
+        ctk.CTkLabel(
+            header,
+            text=f"Prompt di estrazione: {schema_name}",
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(side="left")
+
+        # Info label
+        ctk.CTkLabel(
+            self,
+            text="Modifica il prompt che guida l'LLM nell'estrazione strutturata.\n"
+                 "Il prompt descrive quali entita' estrarre e come classificarle.",
+            font=ctk.CTkFont(size=11),
+            text_color="gray60",
+            justify="left",
+        ).pack(padx=15, pady=(0, 5), anchor="w")
+
+        # Text editor
+        self.text_editor = ctk.CTkTextbox(
+            self, font=ctk.CTkFont(family="Courier", size=12),
+            wrap="word",
+        )
+        self.text_editor.pack(padx=15, pady=5, fill="both", expand=True)
+        self.text_editor.insert("1.0", prompt_text)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(padx=15, pady=10, fill="x")
+
+        ctk.CTkButton(
+            btn_frame, text="Salva", command=self._save, width=100,
+        ).pack(side="right", padx=(5, 0))
+
+        ctk.CTkButton(
+            btn_frame, text="Annulla", command=self.destroy, width=100,
+            fg_color="gray40", hover_color="gray30",
+        ).pack(side="right")
+
+    def _save(self) -> None:
+        text = self.text_editor.get("1.0", "end").strip()
+        self.on_save(self.schema_name, text)
+        self.destroy()
 
 
 class SettingsWindow(ctk.CTkToplevel):
@@ -15,7 +78,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def __init__(self, master, config: AppConfig, on_save: callable):
         super().__init__(master)
         self.title("Impostazioni")
-        self.geometry("600x500")
+        self.geometry("650x550")
         self.resizable(False, False)
         self.transient(master)
         self.grab_set()
@@ -114,14 +177,42 @@ class SettingsWindow(ctk.CTkToplevel):
     def _build_extraction_tab(self) -> None:
         tab = self.tabview.add("Estrazione")
 
-        ctk.CTkLabel(tab, text="Schema di estrazione:").pack(
-            padx=10, pady=(10, 2), anchor="w"
+        # Schema selector
+        schema_row = ctk.CTkFrame(tab, fg_color="transparent")
+        schema_row.pack(padx=10, pady=(10, 5), fill="x")
+
+        ctk.CTkLabel(schema_row, text="Schema di estrazione:").pack(
+            side="left", padx=(0, 10)
         )
         self.schema_menu = ctk.CTkOptionMenu(
-            tab, values=SCHEMA_PRESET_NAMES, width=200,
+            schema_row, values=SCHEMA_PRESET_NAMES, width=200,
+            command=self._on_schema_changed,
         )
         self.schema_menu.set(self.config.active_schema)
-        self.schema_menu.pack(padx=10, pady=5, anchor="w")
+        self.schema_menu.pack(side="left")
+
+        # Schema prompt preview (read-only)
+        ctk.CTkLabel(
+            tab, text="Prompt dello schema (anteprima):",
+            font=ctk.CTkFont(size=12),
+        ).pack(padx=10, pady=(5, 2), anchor="w")
+
+        self.schema_preview = ctk.CTkTextbox(
+            tab, height=120, font=ctk.CTkFont(size=11),
+            state="disabled", wrap="word",
+            text_color="gray70",
+        )
+        self.schema_preview.pack(padx=10, pady=2, fill="both", expand=True)
+
+        # Edit schema button
+        self.edit_schema_btn = ctk.CTkButton(
+            tab, text="Modifica Schema",
+            command=self._open_schema_editor, width=140,
+        )
+        self.edit_schema_btn.pack(padx=10, pady=5, anchor="w")
+
+        # Load the current schema preview
+        self._on_schema_changed(self.config.active_schema)
 
         # Extraction passes
         passes_frame = ctk.CTkFrame(tab, fg_color="transparent")
@@ -160,6 +251,64 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         self.workers_slider.set(self.config.max_workers)
         self.workers_slider.pack(side="left", fill="x", expand=True, padx=5)
+
+    def _on_schema_changed(self, schema_name: str) -> None:
+        """Update the schema preview when schema selection changes."""
+        prompt_text = self._get_schema_prompt(schema_name)
+
+        self.schema_preview.configure(state="normal")
+        self.schema_preview.delete("1.0", "end")
+        if prompt_text:
+            self.schema_preview.insert("1.0", prompt_text)
+        else:
+            self.schema_preview.insert("1.0", "(Nessuno schema selezionato)")
+        self.schema_preview.configure(state="disabled")
+
+        # Enable/disable edit button
+        if schema_name == "none":
+            self.edit_schema_btn.configure(state="disabled")
+        else:
+            self.edit_schema_btn.configure(state="normal")
+
+    def _get_schema_prompt(self, schema_name: str) -> str:
+        """Get the prompt description for a schema."""
+        if schema_name == "none":
+            return ""
+
+        # Check for custom override first
+        custom_prompts = getattr(self.config, "custom_schema_prompts", {})
+        if schema_name in custom_prompts:
+            return custom_prompts[schema_name]
+
+        # Load from preset
+        try:
+            schema = get_schema_preset(schema_name)
+            if schema:
+                return schema.prompt_description
+        except KeyError:
+            pass
+        return ""
+
+    def _open_schema_editor(self) -> None:
+        """Open the schema editor window."""
+        schema_name = self.schema_menu.get()
+        if schema_name == "none":
+            return
+
+        prompt_text = self._get_schema_prompt(schema_name)
+        SchemaEditorWindow(
+            self, schema_name, prompt_text,
+            on_save=self._on_schema_prompt_saved,
+        )
+
+    def _on_schema_prompt_saved(self, schema_name: str, prompt_text: str) -> None:
+        """Called when a schema prompt is saved from the editor."""
+        if not hasattr(self.config, "custom_schema_prompts"):
+            self.config.custom_schema_prompts = {}
+        self.config.custom_schema_prompts[schema_name] = prompt_text
+
+        # Refresh preview
+        self._on_schema_changed(schema_name)
 
     def _build_output_tab(self) -> None:
         tab = self.tabview.add("Output")

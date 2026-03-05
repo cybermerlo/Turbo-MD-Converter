@@ -49,6 +49,10 @@ class LegalExtractor:
             max_char_buffer=self.config.max_char_buffer,
         )
 
+        # Post-processing: deduplicate identical extractions
+        if result.extractions:
+            result = self._deduplicate(result)
+
         extraction_count = len(result.extractions) if result.extractions else 0
         logger.info("Estrazione completata: %d entita' trovate", extraction_count)
 
@@ -65,6 +69,30 @@ class LegalExtractor:
                 phase="extraction",
             )
 
+        return result
+
+    @staticmethod
+    def _deduplicate(result: lx.data.AnnotatedDocument) -> lx.data.AnnotatedDocument:
+        """Remove duplicate extractions with identical class, text, and attributes."""
+        if not result.extractions:
+            return result
+
+        seen = set()
+        unique = []
+        for ext in result.extractions:
+            # Build a hashable key from the extraction's identity
+            attr_key = tuple(sorted(ext.attributes.items())) if ext.attributes else ()
+            key = (ext.extraction_class, ext.extraction_text.strip(), attr_key)
+            if key not in seen:
+                seen.add(key)
+                unique.append(ext)
+
+        removed = len(result.extractions) - len(unique)
+        if removed > 0:
+            logger.info("Deduplicazione: rimossi %d duplicati su %d estrazioni",
+                        removed, len(result.extractions))
+
+        result.extractions = unique
         return result
 
     @staticmethod

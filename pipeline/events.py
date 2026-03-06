@@ -81,3 +81,11 @@ class PageSkippedEvent(PipelineEvent):
     page_num: int = 0
     total_pages: int = 0
     reason: str = ""
+
+
+@dataclass
+class FileRenamedEvent(PipelineEvent):
+    """Emitted when a file is renamed based on extracted content."""
+    original_path: Path | None = None
+    new_path: Path | None = None
+    file_type: str = ""  # "pdf" or "md"

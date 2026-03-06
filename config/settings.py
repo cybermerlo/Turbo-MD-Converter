@@ -26,6 +26,8 @@ class AppConfig:
     page_dpi: int = 200
     jpeg_quality: int = 85
     include_ocr_text_in_output: bool = True
+    rename_output_md: bool = False
+    rename_source_pdf: bool = False
     custom_schema_prompts: dict = field(default_factory=dict)
 
 

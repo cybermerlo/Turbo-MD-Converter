@@ -340,6 +340,36 @@ class SettingsWindow(ctk.CTkToplevel):
             variable=self.include_ocr_var,
         ).pack(padx=10, pady=5, anchor="w")
 
+        # File renaming options
+        rename_sep = ctk.CTkFrame(tab, height=1, fg_color="gray50")
+        rename_sep.pack(padx=10, pady=(10, 5), fill="x")
+
+        ctk.CTkLabel(
+            tab, text="Rinomina automatica file",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(padx=10, pady=(5, 2), anchor="w")
+
+        ctk.CTkLabel(
+            tab,
+            text="Formato: YYYYMMDD - Descrizione del contenuto.ext\n"
+                 "Ricavato automaticamente dai dati estratti (nessuna chiamata LLM aggiuntiva).\n"
+                 "Richiede che sia attivo uno schema di estrazione (non 'none').",
+            font=ctk.CTkFont(size=11), text_color="gray60",
+            justify="left",
+        ).pack(padx=10, pady=(0, 5), anchor="w")
+
+        self.rename_md_var = ctk.BooleanVar(value=self.config.rename_output_md)
+        ctk.CTkCheckBox(
+            tab, text="Rinomina file MD di output",
+            variable=self.rename_md_var,
+        ).pack(padx=10, pady=2, anchor="w")
+
+        self.rename_pdf_var = ctk.BooleanVar(value=self.config.rename_source_pdf)
+        ctk.CTkCheckBox(
+            tab, text="Rinomina file PDF sorgente",
+            variable=self.rename_pdf_var,
+        ).pack(padx=10, pady=2, anchor="w")
+
     def _toggle_key_visibility(self) -> None:
         show = "" if self.show_key_var.get() else "*"
         self.api_key_entry.configure(show=show)
@@ -366,6 +396,8 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.max_workers = int(self.workers_slider.get())
         self.config.output_directory = self.output_dir_entry.get().strip()
         self.config.include_ocr_text_in_output = self.include_ocr_var.get()
+        self.config.rename_output_md = self.rename_md_var.get()
+        self.config.rename_source_pdf = self.rename_pdf_var.get()
 
         self.on_save(self.config)
         self.destroy()

@@ -18,6 +18,7 @@ from pipeline.events import (
     ErrorEvent,
     ExtractionCompleteEvent,
     ExtractionStartEvent,
+    FileRenamedEvent,
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
@@ -122,6 +123,25 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkOptionMenu(
             schema_row, values=SCHEMA_PRESET_NAMES,
             variable=self.schema_var, width=230,
+        ).pack(side="left")
+
+        # Rename options
+        rename_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
+        rename_row.pack(padx=10, pady=(0, 5), fill="x")
+
+        ctk.CTkLabel(rename_row, text="Rinomina:", font=ctk.CTkFont(weight="bold")).pack(
+            side="left", padx=(0, 10)
+        )
+        self.rename_md_var = ctk.BooleanVar(value=self.config.rename_output_md)
+        ctk.CTkCheckBox(
+            rename_row, text="MD",
+            variable=self.rename_md_var, width=60,
+        ).pack(side="left", padx=(0, 5))
+
+        self.rename_pdf_var = ctk.BooleanVar(value=self.config.rename_source_pdf)
+        ctk.CTkCheckBox(
+            rename_row, text="PDF sorgente",
+            variable=self.rename_pdf_var, width=120,
         ).pack(side="left")
 
         # Action buttons
@@ -240,9 +260,16 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 cost = event.cost_info.get("total", {})
                 total_tok = cost.get("input_tokens", 0) + cost.get("output_tokens", 0)
                 self.progress_frame.update_cost(total_tok, cost.get("cost_usd", 0))
+                self.progress_frame.update_cost_breakdown(event.cost_info)
 
         elif isinstance(event, BatchCompleteEvent):
             self._on_batch_complete(event)
+
+        elif isinstance(event, FileRenamedEvent):
+            self.log_frame.append(
+                f"File {event.file_type.upper()} rinominato: "
+                f"{event.original_path.name} -> {event.new_path.name}"
+            )
 
         elif isinstance(event, ErrorEvent):
             self.log_frame.append(event.error_message, "ERROR")
@@ -270,6 +297,16 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # Update model from selector
         self.config.ocr_model_id = self.model_var.get()
         self.config.active_schema = self.schema_var.get()
+        self.config.rename_output_md = self.rename_md_var.get()
+        self.config.rename_source_pdf = self.rename_pdf_var.get()
+
+        # Warn if rename is enabled but schema is "none"
+        if (self.config.rename_output_md or self.config.rename_source_pdf) and self.config.active_schema == "none":
+            self.log_frame.append(
+                "Attenzione: la rinomina automatica richiede uno schema di estrazione attivo. "
+                "Con schema 'none' i file non verranno rinominati.",
+                "WARNING",
+            )
 
         # Output format is always markdown
         self.config.output_formats = ["markdown"]
@@ -316,5 +353,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config = config
         self.model_var.set(config.ocr_model_id)
         self.schema_var.set(config.active_schema)
+        self.rename_md_var.set(config.rename_output_md)
+        self.rename_pdf_var.set(config.rename_source_pdf)
         save_config(config)
         self.log_frame.append("Impostazioni salvate")

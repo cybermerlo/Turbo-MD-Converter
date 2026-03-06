@@ -17,6 +17,7 @@ from pipeline.events import (
     ErrorEvent,
     ExtractionCompleteEvent,
     ExtractionStartEvent,
+    FileRenamedEvent,
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
@@ -25,6 +26,7 @@ from pipeline.events import (
     PipelineEvent,
 )
 from utils.cost_tracker import CostTracker
+from utils.file_renamer import derive_filename, build_new_filepath, rename_file
 
 logger = logging.getLogger(__name__)
 
@@ -175,10 +177,19 @@ class DocumentProcessor:
             return False, cost_info
 
         self.emit(OutputWrittenEvent(file_paths=output_files))
+
+        # Phase 4: Rename files based on extracted content (if enabled)
+        renamed_pdf_path = pdf_path
+        renamed_output_files = list(output_files)
+        if (self.config.rename_output_md or self.config.rename_source_pdf) and extractions:
+            renamed_pdf_path, renamed_output_files = self._rename_files(
+                pdf_path, output_files, extractions,
+            )
+
         self.emit(PipelineCompleteEvent(
-            pdf_path=pdf_path,
+            pdf_path=renamed_pdf_path,
             success=True,
-            output_files=output_files,
+            output_files=renamed_output_files,
             cost_info=cost_info,
         ))
         self.emit(LogEvent(
@@ -223,7 +234,9 @@ class DocumentProcessor:
         # Mostra il resoconto totale alla fine
         total_cost_info = total_cost_tracker.get_totals()
         total = total_cost_info.get("total", {})
-        
+        ocr_cost = total_cost_info.get("ocr", {})
+        ext_cost = total_cost_info.get("extraction", {})
+
         self.emit(LogEvent(
             message=f"Conversione completata: {successful} riusciti, {failed} falliti"
         ))
@@ -235,7 +248,14 @@ class DocumentProcessor:
                     f"{total.get('output_tokens', 0):,} output"
         ))
         self.emit(LogEvent(
-            message=f"  - Costo totale stimato: ${total.get('cost_usd', 0):.4f}"
+            message=f"  - Costo OCR: ${ocr_cost.get('cost_usd', 0):.4f}"
+        ))
+        if ext_cost.get("cost_usd", 0) > 0:
+            self.emit(LogEvent(
+                message=f"  - Costo estrazione: ~${ext_cost.get('cost_usd', 0):.4f} (stimato)"
+            ))
+        self.emit(LogEvent(
+            message=f"  - Costo totale: ${total.get('cost_usd', 0):.4f}"
         ))
 
         self.emit(BatchCompleteEvent(
@@ -243,6 +263,71 @@ class DocumentProcessor:
             successful=successful,
             failed=failed,
         ))
+
+    def _rename_files(
+        self,
+        pdf_path: Path,
+        output_files: list[Path],
+        extractions: list[dict],
+    ) -> tuple[Path, list[Path]]:
+        """Rename PDF source and/or MD output based on extraction results.
+
+        Returns:
+            Tuple of (possibly_renamed_pdf_path, possibly_renamed_output_files).
+        """
+        result = derive_filename(extractions, self.config.active_schema)
+        if result is None:
+            self.emit(LogEvent(
+                message="Rinomina file: dati insufficienti dalle estrazioni per determinare un nome",
+                level="WARNING",
+            ))
+            return pdf_path, output_files
+
+        date_str, description = result
+        self.emit(LogEvent(
+            message=f"Rinomina file: data={date_str}, descrizione='{description}'"
+        ))
+
+        renamed_pdf = pdf_path
+        renamed_outputs = list(output_files)
+
+        # Rename output MD file
+        if self.config.rename_output_md:
+            for i, fp in enumerate(renamed_outputs):
+                if fp.suffix.lower() == ".md":
+                    new_path = build_new_filepath(fp, date_str, description)
+                    try:
+                        actual_path = rename_file(fp, new_path)
+                        self.emit(FileRenamedEvent(
+                            original_path=fp, new_path=actual_path, file_type="md",
+                        ))
+                        self.emit(LogEvent(
+                            message=f"File MD rinominato: {fp.name} -> {actual_path.name}"
+                        ))
+                        renamed_outputs[i] = actual_path
+                    except OSError as e:
+                        self.emit(LogEvent(
+                            message=f"Errore rinomina MD: {e}", level="ERROR",
+                        ))
+
+        # Rename source PDF
+        if self.config.rename_source_pdf:
+            new_pdf_path = build_new_filepath(pdf_path, date_str, description)
+            try:
+                actual_pdf_path = rename_file(pdf_path, new_pdf_path)
+                self.emit(FileRenamedEvent(
+                    original_path=pdf_path, new_path=actual_pdf_path, file_type="pdf",
+                ))
+                self.emit(LogEvent(
+                    message=f"File PDF rinominato: {pdf_path.name} -> {actual_pdf_path.name}"
+                ))
+                renamed_pdf = actual_pdf_path
+            except OSError as e:
+                self.emit(LogEvent(
+                    message=f"Errore rinomina PDF: {e}", level="ERROR",
+                ))
+
+        return renamed_pdf, renamed_outputs
 
     def _on_ocr_page(self, page_num: int, total_pages: int, success: bool) -> None:
         """Callback from OCR pipeline after each page."""

@@ -36,7 +36,15 @@ class ProgressFrame(ctk.CTkFrame):
             self, text="Costo: $0.0000 | Token: 0",
             font=ctk.CTkFont(size=12),
         )
-        self.cost_label.pack(padx=10, pady=(10, 5), anchor="w")
+        self.cost_label.pack(padx=10, pady=(10, 2), anchor="w")
+
+        # Detailed cost breakdown
+        self.cost_detail_label = ctk.CTkLabel(
+            self, text="",
+            font=ctk.CTkFont(size=11),
+            text_color="gray60",
+        )
+        self.cost_detail_label.pack(padx=10, pady=(0, 5), anchor="w")
 
     def update_ocr(self, page_num: int, total_pages: int, success: bool) -> None:
         """Update OCR progress bar and label."""
@@ -71,6 +79,20 @@ class ProgressFrame(ctk.CTkFrame):
             text=f"Costo: ${cost_usd:.4f} | Token: {total_tokens:,}"
         )
 
+    def update_cost_breakdown(self, cost_info: dict) -> None:
+        """Show detailed cost breakdown by phase."""
+        ocr = cost_info.get("ocr", {})
+        ext = cost_info.get("extraction", {})
+
+        parts = []
+        if ocr.get("cost_usd", 0) > 0:
+            parts.append(f"OCR: ${ocr['cost_usd']:.4f}")
+        if ext.get("cost_usd", 0) > 0:
+            parts.append(f"Estrazione: ~${ext['cost_usd']:.4f} (stimato)")
+
+        if parts:
+            self.cost_detail_label.configure(text=" | ".join(parts))
+
     def reset(self) -> None:
         """Reset all progress indicators."""
         self.ocr_progress.set(0)
@@ -80,3 +102,4 @@ class ProgressFrame(ctk.CTkFrame):
         self.ext_progress.set(0)
         self.ext_label.configure(text="Estrazione: In attesa...")
         self.cost_label.configure(text="Costo: $0.0000 | Token: 0")
+        self.cost_detail_label.configure(text="")

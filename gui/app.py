@@ -297,11 +297,15 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _start_processing(self) -> None:
         """Start the pipeline worker."""
-        pdf_paths = self.input_frame.get_pdf_paths()
+        pdf_paths = self.input_frame.get_file_paths()
         if not pdf_paths:
             return
 
-        if not self.config.gemini_api_key:
+        # Gemini API key is required for PDF OCR or structured extraction.
+        # It is not required when processing only TXT/EML files with schema 'none'.
+        has_pdf = any(p.suffix.lower() == ".pdf" for p in pdf_paths)
+        schema_active = self.schema_var.get() != "none"
+        if not self.config.gemini_api_key and (has_pdf or schema_active):
             self.log_frame.append(
                 "Chiave API Gemini non configurata. Apri Impostazioni.", "ERROR"
             )

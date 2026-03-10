@@ -1,5 +1,7 @@
-"""Full pipeline orchestrator: PDF -> OCR -> Extract -> Output."""
+"""Full pipeline orchestrator: PDF/TXT/EML -> OCR (PDF only) -> Extract -> Output."""
 
+import email
+import email.policy
 import logging
 import threading
 from pathlib import Path
@@ -73,7 +75,9 @@ class DocumentProcessor:
         pdf_path: Path,
         cancel_event: threading.Event,
     ) -> tuple[bool, dict]:
-        """Process one PDF through the full pipeline.
+        """Process one document through the full pipeline.
+
+        PDF files go through OCR; TXT and EML files are read directly.
 
         Returns:
             Tuple of (success: bool, cost_info: dict)
@@ -81,25 +85,41 @@ class DocumentProcessor:
         self.cost_tracker.reset()
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
-        # Phase 1: OCR
-        try:
-            ocr_result = self.ocr_pipeline.process_pdf(
-                pdf_path=pdf_path,
-                on_page_complete=self._on_ocr_page,
-                on_page_skipped=self._on_page_skipped,
-                cancel_event=cancel_event,
-            )
-        except Exception as e:
-            self.emit(ErrorEvent(
-                error_message=f"Errore OCR: {e}",
-                recoverable=False,
-            ))
-            cost_info = self.cost_tracker.get_totals()
-            self.emit(PipelineCompleteEvent(
-                pdf_path=pdf_path, success=False,
-                cost_info=cost_info,
-            ))
-            return False, cost_info
+        # Phase 1: OCR (skipped for TXT/EML - read text directly)
+        suffix = pdf_path.suffix.lower()
+        if suffix in (".txt", ".eml"):
+            try:
+                ocr_result = self._read_text_file(pdf_path)
+            except Exception as e:
+                self.emit(ErrorEvent(
+                    error_message=f"Errore lettura file: {e}",
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
+        else:
+            try:
+                ocr_result = self.ocr_pipeline.process_pdf(
+                    pdf_path=pdf_path,
+                    on_page_complete=self._on_ocr_page,
+                    on_page_skipped=self._on_page_skipped,
+                    cancel_event=cancel_event,
+                )
+            except Exception as e:
+                self.emit(ErrorEvent(
+                    error_message=f"Errore OCR: {e}",
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
 
         if cancel_event.is_set():
             self.emit(LogEvent(message="Elaborazione annullata", level="WARNING"))
@@ -370,3 +390,52 @@ class DocumentProcessor:
             total_pages=total_pages,
             reason=reason,
         ))
+
+    def _read_text_file(self, file_path: Path):
+        """Read text content directly from TXT or EML files (no OCR needed)."""
+        from ocr.ocr_pipeline import OCRResult
+
+        suffix = file_path.suffix.lower()
+        if suffix == ".eml":
+            text = self._extract_eml_text(file_path)
+            self.emit(LogEvent(message=f"File EML letto direttamente (OCR non necessario)"))
+        else:
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+            self.emit(LogEvent(message=f"File TXT letto direttamente (OCR non necessario)"))
+
+        return OCRResult(
+            pdf_path=file_path,
+            combined_text=text,
+            total_pages=1,
+            successful_pages=1,
+        )
+
+    @staticmethod
+    def _extract_eml_text(file_path: Path) -> str:
+        """Extract plain-text content from an EML file, including key headers."""
+        msg = email.message_from_bytes(
+            file_path.read_bytes(),
+            policy=email.policy.default,
+        )
+
+        parts = []
+
+        # Include relevant headers
+        for header in ("date", "from", "to", "cc", "subject"):
+            value = msg.get(header, "").strip()
+            if value:
+                parts.append(f"{header.capitalize()}: {value}")
+        if parts:
+            parts.append("")
+
+        # Walk MIME parts and collect text/plain bodies
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                try:
+                    body = part.get_content()
+                    if body and body.strip():
+                        parts.append(body)
+                except Exception:
+                    pass
+
+        return "\n".join(parts)

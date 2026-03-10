@@ -144,6 +144,19 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             variable=self.rename_pdf_var, width=120,
         ).pack(side="left")
 
+        # Subfolder output checkbox
+        subfolder_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
+        subfolder_row.pack(padx=10, pady=(0, 5), fill="x")
+
+        self.use_subfolder_var = ctk.BooleanVar(value=self.config.use_output_subfolder)
+        self.subfolder_checkbox = ctk.CTkCheckBox(
+            subfolder_row,
+            text=f"Salva MD in sottocartella \"{self.config.output_subfolder_name}\"",
+            variable=self.use_subfolder_var,
+            command=self._on_subfolder_changed,
+        )
+        self.subfolder_checkbox.pack(side="left")
+
         # Action buttons
         btn_frame = ctk.CTkFrame(left)
         btn_frame.grid(row=2, column=0, sticky="ew", pady=(5, 0))
@@ -299,6 +312,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.active_schema = self.schema_var.get()
         self.config.rename_output_md = self.rename_md_var.get()
         self.config.rename_source_pdf = self.rename_pdf_var.get()
+        self.config.use_output_subfolder = self.use_subfolder_var.get()
 
         # Warn if rename is enabled but schema is "none"
         if (self.config.rename_output_md or self.config.rename_source_pdf) and self.config.active_schema == "none":
@@ -348,6 +362,10 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """Open the settings dialog."""
         SettingsWindow(self, self.config, self._on_settings_saved)
 
+    def _on_subfolder_changed(self) -> None:
+        """Called when the subfolder checkbox changes."""
+        self.config.use_output_subfolder = self.use_subfolder_var.get()
+
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""
         self.config = config
@@ -355,5 +373,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.schema_var.set(config.active_schema)
         self.rename_md_var.set(config.rename_output_md)
         self.rename_pdf_var.set(config.rename_source_pdf)
+        self.use_subfolder_var.set(config.use_output_subfolder)
+        self.subfolder_checkbox.configure(
+            text=f"Salva MD in sottocartella \"{config.output_subfolder_name}\""
+        )
         save_config(config)
         self.log_frame.append("Impostazioni salvate")

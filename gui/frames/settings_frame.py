@@ -340,6 +340,26 @@ class SettingsWindow(ctk.CTkToplevel):
             variable=self.include_ocr_var,
         ).pack(padx=10, pady=5, anchor="w")
 
+        # Subfolder name
+        subfolder_sep = ctk.CTkFrame(tab, height=1, fg_color="gray50")
+        subfolder_sep.pack(padx=10, pady=(10, 5), fill="x")
+
+        ctk.CTkLabel(
+            tab, text="Sottocartella per i file MD",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(padx=10, pady=(5, 2), anchor="w")
+
+        ctk.CTkLabel(
+            tab,
+            text="Nome della sottocartella usata quando l'opzione \"Salva MD in sottocartella\" è attiva.",
+            font=ctk.CTkFont(size=11), text_color="gray60",
+            justify="left",
+        ).pack(padx=10, pady=(0, 5), anchor="w")
+
+        self.subfolder_name_entry = ctk.CTkEntry(tab, width=300)
+        self.subfolder_name_entry.pack(padx=10, pady=(0, 5), anchor="w")
+        self.subfolder_name_entry.insert(0, self.config.output_subfolder_name)
+
         # File renaming options
         rename_sep = ctk.CTkFrame(tab, height=1, fg_color="gray50")
         rename_sep.pack(padx=10, pady=(10, 5), fill="x")
@@ -396,6 +416,9 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.max_workers = int(self.workers_slider.get())
         self.config.output_directory = self.output_dir_entry.get().strip()
         self.config.include_ocr_text_in_output = self.include_ocr_var.get()
+        subfolder_name = self.subfolder_name_entry.get().strip()
+        if subfolder_name:
+            self.config.output_subfolder_name = subfolder_name
         self.config.rename_output_md = self.rename_md_var.get()
         self.config.rename_source_pdf = self.rename_pdf_var.get()
 

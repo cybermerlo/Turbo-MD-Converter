@@ -53,9 +53,20 @@ class DocumentProcessor:
 
         self.md_formatter = MarkdownFormatter()
         self.json_formatter = JSONFormatter()
-        self.writer = OutputWriter(
-            Path(config.output_directory) if config.output_directory else None
-        )
+
+        # Build the fixed output directory (if configured via settings).
+        # When use_output_subfolder is True AND an output_directory is set,
+        # we append the subfolder name once here.  When output_directory is
+        # empty the subfolder is computed per-PDF in process_single().
+        if config.output_directory:
+            base_dir = Path(config.output_directory)
+            if config.use_output_subfolder:
+                base_dir = base_dir / config.output_subfolder_name
+            self._fixed_output_dir: Path | None = base_dir
+        else:
+            self._fixed_output_dir = None
+
+        self.writer = OutputWriter(self._fixed_output_dir)
 
     def process_single(
         self,
@@ -159,8 +170,17 @@ class DocumentProcessor:
                 cost_info=None,
             )
 
+        # When use_output_subfolder is True and no fixed output directory is
+        # configured, create the subfolder next to the source PDF.
+        if self.config.use_output_subfolder and self._fixed_output_dir is None:
+            per_pdf_dir = pdf_path.parent / self.config.output_subfolder_name
+            per_pdf_dir.mkdir(parents=True, exist_ok=True)
+            writer = OutputWriter(per_pdf_dir)
+        else:
+            writer = self.writer
+
         try:
-            output_files = self.writer.write(
+            output_files = writer.write(
                 pdf_path=pdf_path,
                 markdown=markdown,
                 json_data=json_data,

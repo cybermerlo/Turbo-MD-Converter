@@ -13,45 +13,17 @@ class OutputFrame(ctk.CTkFrame):
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
 
-        # Output format selection
-        format_frame = ctk.CTkFrame(self, fg_color="transparent")
-        format_frame.pack(padx=10, pady=(10, 5), fill="x")
-
-        ctk.CTkLabel(
-            format_frame, text="Formato output:",
-            font=ctk.CTkFont(weight="bold"),
-        ).pack(side="left", padx=(0, 10))
-
-        self.md_var = ctk.BooleanVar(value=True)
-        self.md_check = ctk.CTkCheckBox(
-            format_frame, text="Markdown", variable=self.md_var,
-        )
-        self.md_check.pack(side="left", padx=(0, 10))
-
-        self.json_var = ctk.BooleanVar(value=False)
-        self.json_check = ctk.CTkCheckBox(
-            format_frame, text="JSON", variable=self.json_var,
-        )
-        self.json_check.pack(side="left")
-
-        # Results preview tabview
+        # Results preview
         self.tabview = ctk.CTkTabview(self)
-        self.tabview.pack(padx=10, pady=5, fill="both", expand=True)
+        self.tabview.pack(padx=10, pady=(10, 5), fill="both", expand=True)
 
         self.tab_md = self.tabview.add("Markdown")
-        self.tab_json = self.tabview.add("JSON")
 
         self.md_textbox = ctk.CTkTextbox(
             self.tab_md, font=ctk.CTkFont(family="Consolas", size=12),
         )
         self.md_textbox.pack(fill="both", expand=True)
         self.md_textbox.configure(state="disabled")
-
-        self.json_textbox = ctk.CTkTextbox(
-            self.tab_json, font=ctk.CTkFont(family="Consolas", size=12),
-        )
-        self.json_textbox.pack(fill="both", expand=True)
-        self.json_textbox.configure(state="disabled")
 
         # Open output folder button
         self.open_folder_btn = ctk.CTkButton(
@@ -65,12 +37,7 @@ class OutputFrame(ctk.CTkFrame):
 
     def get_output_formats(self) -> list[str]:
         """Return selected output format names."""
-        formats = []
-        if self.md_var.get():
-            formats.append("markdown")
-        if self.json_var.get():
-            formats.append("json")
-        return formats
+        return ["markdown"]
 
     def show_markdown(self, content: str) -> None:
         """Display markdown content in the preview tab."""
@@ -81,11 +48,8 @@ class OutputFrame(ctk.CTkFrame):
         self.tabview.set("Markdown")
 
     def show_json(self, content: str) -> None:
-        """Display JSON content in the preview tab."""
-        self.json_textbox.configure(state="normal")
-        self.json_textbox.delete("1.0", "end")
-        self.json_textbox.insert("1.0", content)
-        self.json_textbox.configure(state="disabled")
+        """No-op: JSON output is no longer supported."""
+        pass
 
     def set_output_dir(self, path: Path) -> None:
         """Set the output directory for the open folder button."""
@@ -107,12 +71,7 @@ class OutputFrame(ctk.CTkFrame):
         self.md_textbox.configure(state="normal")
         self.md_textbox.delete("1.0", "end")
         self.md_textbox.configure(state="disabled")
-        self.json_textbox.configure(state="normal")
-        self.json_textbox.delete("1.0", "end")
-        self.json_textbox.configure(state="disabled")
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable/disable format checkboxes."""
-        state = "normal" if enabled else "disabled"
-        self.md_check.configure(state=state)
-        self.json_check.configure(state=state)
+        """Enable/disable controls (no-op, kept for API compatibility)."""
+        pass

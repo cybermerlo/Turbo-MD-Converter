@@ -225,6 +225,11 @@ class DocumentProcessor:
             renamed_pdf_path, renamed_output_files = self._rename_files(
                 pdf_path, output_files, extractions,
             )
+        elif self.config.rename_output_md or self.config.rename_source_pdf:
+            self.emit(LogEvent(
+                message="Rinomina file saltata: nessuna estrazione disponibile (schema 'none')",
+                level="WARNING",
+            ))
 
         self.emit(PipelineCompleteEvent(
             pdf_path=renamed_pdf_path,

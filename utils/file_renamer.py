@@ -14,6 +14,43 @@ _ITALIAN_MONTHS = {
     "settembre": 9, "ottobre": 10, "novembre": 11, "dicembre": 12,
 }
 
+# Ordered list of (pattern_to_search, label_to_use) for known Italian document types.
+# Patterns are matched case-insensitively against the first part of the OCR text.
+_DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
+    # More specific patterns must come before their sub-phrases
+    (r"comparsa\s+di\s+costituzione\s+e\s+risposta", "Comparsa di Costituzione e Risposta"),
+    (r"comparsa\s+di\s+costituzione", "Comparsa di Costituzione"),
+    (r"comparsa\s+conclusionale", "Comparsa Conclusionale"),
+    (r"atto\s+di\s+citazione", "Atto di Citazione"),
+    (r"opposizione\s+a\s+decreto\s+ingiuntivo", "Opposizione a Decreto Ingiuntivo"),
+    (r"ricorso\s+per\s+decreto\s+ingiuntivo", "Ricorso per Decreto Ingiuntivo"),
+    (r"decreto\s+ingiuntivo", "Decreto Ingiuntivo"),
+    (r"\bopposizione\b", "Opposizione"),
+    (r"\bricorso\b", "Ricorso"),
+    (r"memoria\s+difensiva", "Memoria Difensiva"),
+    (r"\bmemoria\b", "Memoria"),
+    (r"\bsentenza\b", "Sentenza"),
+    (r"\bordinanza\b", "Ordinanza"),
+    (r"\bprecetto\b", "Precetto"),
+    (r"\bpignoramento\b", "Pignoramento"),
+    (r"\bdiffida\b", "Diffida"),
+    (r"\bprocura\b", "Procura"),
+    (r"atto\s+notarile", "Atto Notarile"),
+    (r"\bcontratto\b", "Contratto"),
+    (r"verbale\s+di\s+udienza", "Verbale di Udienza"),
+    (r"\bfattura\b", "Fattura"),
+    (r"estratto\s+conto", "Estratto Conto"),
+]
+
+# Lines matching these patterns are skipped when looking for a title fallback.
+# Split into case-sensitive and case-insensitive parts to avoid Python 3.11
+# restrictions on inline (?i) flags in alternations.
+_SKIP_LINE_RE = re.compile(r"^\s*$|@|^\s*\d[\d\s./,\-]{3,}$")
+_SKIP_LINE_RE_I = re.compile(
+    r"tel[.:\s]|fax[.:\s]|p\.?\s*iva|c\.?\s*f\.?|pec\b"
+    r"|(via|viale|piazza|corso|largo)\s+\w|cap\s*\d{5}",
+    re.IGNORECASE,
+)
 
 def _parse_italian_date(text: str) -> str | None:
     """Try to parse an Italian date string into YYYYMMDD format.
@@ -118,17 +155,49 @@ def _find_date_from_text(text: str) -> str | None:
     return None
 
 
+def _find_description_from_text(text: str) -> str | None:
+    """Extract a content description from raw OCR text without an LLM call.
+
+    Strategy:
+    1. Look for a known Italian document-type keyword (highest priority).
+    2. Fall back to the first meaningful non-header line in the text.
+    """
+    sample = text[:4000]
+
+    # 1. Keyword match for known document types (longest/most-specific first)
+    for pattern, label in _DOCUMENT_TYPE_PATTERNS:
+        if re.search(pattern, sample, re.IGNORECASE):
+            return label
+
+    # 2. First meaningful line that doesn't look like a header/address/contact
+    for line in sample.split('\n'):
+        line = line.strip()
+        if len(line) < 6 or len(line) > 120:
+            continue
+        if _SKIP_LINE_RE.search(line) or _SKIP_LINE_RE_I.search(line):
+            continue
+        # Must contain at least a few real letters (not just numbers/symbols)
+        if sum(1 for c in line if c.isalpha()) < 5:
+            continue
+        return _shorten_name(line, max_len=80)
+
+    return None
+
+
 def derive_filename_from_text(
     ocr_text: str, original_filename: str
 ) -> tuple[str, str]:
     """Derive a filename from raw OCR text (used when schema is 'none').
 
-    Finds the first date in the OCR text and uses the original filename stem
-    as the description. Always returns a usable tuple.
+    Extracts the document date and a content-based description directly from
+    the OCR text, with zero additional LLM calls.
+    Falls back to the original filename stem only if no description can be found.
     """
     date_str = _find_date_from_text(ocr_text) or "00000000"
-    stem = Path(original_filename).stem
-    description = _sanitize_filename(stem) or "Documento"
+    description = _find_description_from_text(ocr_text)
+    if not description:
+        stem = Path(original_filename).stem
+        description = _sanitize_filename(stem) or "Documento"
     return date_str, description
 
 

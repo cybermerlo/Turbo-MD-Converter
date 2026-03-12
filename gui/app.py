@@ -318,14 +318,6 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.rename_source_pdf = self.rename_pdf_var.get()
         self.config.use_output_subfolder = self.use_subfolder_var.get()
 
-        # Warn if rename is enabled but schema is "none"
-        if (self.config.rename_output_md or self.config.rename_source_pdf) and self.config.active_schema == "none":
-            self.log_frame.append(
-                "Attenzione: la rinomina automatica richiede uno schema di estrazione attivo. "
-                "Con schema 'none' i file non verranno rinominati.",
-                "WARNING",
-            )
-
         # Output format is always markdown
         self.config.output_formats = ["markdown"]
 

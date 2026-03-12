@@ -109,6 +109,29 @@ def _find_date_from_extractions(extractions: list[dict]) -> str | None:
     return None
 
 
+def _find_date_from_text(text: str) -> str | None:
+    """Find the first recognizable date by scanning raw OCR text line by line."""
+    for line in text[:3000].split('\n'):
+        parsed = _parse_italian_date(line.strip())
+        if parsed:
+            return parsed
+    return None
+
+
+def derive_filename_from_text(
+    ocr_text: str, original_filename: str
+) -> tuple[str, str]:
+    """Derive a filename from raw OCR text (used when schema is 'none').
+
+    Finds the first date in the OCR text and uses the original filename stem
+    as the description. Always returns a usable tuple.
+    """
+    date_str = _find_date_from_text(ocr_text) or "00000000"
+    stem = Path(original_filename).stem
+    description = _sanitize_filename(stem) or "Documento"
+    return date_str, description
+
+
 def _find_description_from_extractions(
     extractions: list[dict], schema_name: str
 ) -> str | None:

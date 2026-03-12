@@ -205,12 +205,26 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """Handle files dropped on the input frame (only PDFs are added)."""
         if not event.data:
             return
+        # tk.splitlist() handles Tcl list format natively: it correctly parses
+        # both plain paths and {brace-quoted paths with spaces}.
+        # Do NOT strip braces before calling it — that breaks multi-file drops.
         try:
-            raw = event.data.strip().strip("{}")
-            paths = self.tk.splitlist(raw) if raw else []
+            paths = self.tk.splitlist(event.data)
         except Exception:
-            paths = [event.data.replace("{", "").replace("}", "").strip()]
-        path_objs = [Path(p) for p in paths if p]
+            paths = [event.data.strip()]
+
+        path_objs = []
+        for p in paths:
+            p = p.strip()
+            if not p:
+                continue
+            # Handle file:// URIs emitted by some Linux DnD managers
+            if p.startswith("file://"):
+                import urllib.parse
+                import urllib.request
+                p = urllib.request.url2pathname(urllib.parse.urlparse(p).path)
+            path_objs.append(Path(p))
+
         self.input_frame.add_paths(path_objs)
         return event.action
 

@@ -22,6 +22,7 @@ dist/
 *.egg-info/
 *.egg
 
-# Output e cache
-output/
+# Output e cache (cartelle generate dall'utente, non il modulo Python source)
+output/*
+!output/*.py
 *.log

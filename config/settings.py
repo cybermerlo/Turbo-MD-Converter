@@ -18,7 +18,7 @@ class AppConfig:
     ocr_model_id: str = "gemini-3.1-flash-lite-preview"
     extraction_model_id: str = "gemini-2.5-flash"
     ocr_prompt: str = ""
-    active_schema: str = "full_legal"
+    active_schema: str = "none"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     extraction_passes: int = 1
     max_workers: int = 15

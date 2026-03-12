@@ -184,9 +184,23 @@ class DocumentProcessor:
         json_data = None
 
         if "markdown" in self.config.output_formats:
+            # When renaming is enabled, use the future renamed filename in the MD
+            # header so the title matches the file that ends up on disk.
+            header_filename = pdf_path.name
+            if self.config.rename_output_md or self.config.rename_source_pdf:
+                if extractions:
+                    _rename_result = derive_filename(extractions, self.config.active_schema)
+                else:
+                    _rename_result = derive_filename_from_text(
+                        ocr_result.combined_text, pdf_path.name
+                    )
+                if _rename_result:
+                    _date_str, _description = _rename_result
+                    header_filename = f"{_date_str} - {_description}{pdf_path.suffix}"
+
             markdown = self.md_formatter.format(
                 extractions=extractions,
-                source_filename=pdf_path.name,
+                source_filename=header_filename,
                 total_pages=ocr_result.total_pages,
                 ocr_text=ocr_result.combined_text if self.config.include_ocr_text_in_output else None,
                 cost_info=None,

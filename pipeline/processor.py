@@ -28,7 +28,9 @@ from pipeline.events import (
     PipelineEvent,
 )
 from utils.cost_tracker import CostTracker
-from utils.file_renamer import derive_filename, build_new_filepath, rename_file
+from utils.file_renamer import (
+    build_new_filepath, derive_filename, derive_filename_from_text, rename_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -221,15 +223,10 @@ class DocumentProcessor:
         # Phase 4: Rename files based on extracted content (if enabled)
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
-        if (self.config.rename_output_md or self.config.rename_source_pdf) and extractions:
+        if self.config.rename_output_md or self.config.rename_source_pdf:
             renamed_pdf_path, renamed_output_files = self._rename_files(
-                pdf_path, output_files, extractions,
+                pdf_path, output_files, extractions, ocr_result.combined_text,
             )
-        elif self.config.rename_output_md or self.config.rename_source_pdf:
-            self.emit(LogEvent(
-                message="Rinomina file saltata: nessuna estrazione disponibile (schema 'none')",
-                level="WARNING",
-            ))
 
         self.emit(PipelineCompleteEvent(
             pdf_path=renamed_pdf_path,
@@ -314,19 +311,27 @@ class DocumentProcessor:
         pdf_path: Path,
         output_files: list[Path],
         extractions: list[dict],
+        ocr_text: str = "",
     ) -> tuple[Path, list[Path]]:
-        """Rename PDF source and/or MD output based on extraction results.
+        """Rename PDF source and/or MD output based on extraction results or OCR text.
+
+        When extractions are available (active schema), derives the filename from
+        structured data. When extractions is empty (schema 'none'), falls back to
+        scanning the raw OCR text for a date and using the original filename stem.
 
         Returns:
             Tuple of (possibly_renamed_pdf_path, possibly_renamed_output_files).
         """
-        result = derive_filename(extractions, self.config.active_schema)
-        if result is None:
-            self.emit(LogEvent(
-                message="Rinomina file: dati insufficienti dalle estrazioni per determinare un nome",
-                level="WARNING",
-            ))
-            return pdf_path, output_files
+        if extractions:
+            result = derive_filename(extractions, self.config.active_schema)
+            if result is None:
+                self.emit(LogEvent(
+                    message="Rinomina file: dati insufficienti dalle estrazioni per determinare un nome",
+                    level="WARNING",
+                ))
+                return pdf_path, output_files
+        else:
+            result = derive_filename_from_text(ocr_text, pdf_path.name)
 
         date_str, description = result
         self.emit(LogEvent(

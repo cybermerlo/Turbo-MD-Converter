@@ -337,14 +337,6 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.log_frame.append(f"Avviata elaborazione di {len(pdf_paths)} documenti")
 
-        # Warn if rename is enabled but schema is "none"
-        if (self.config.rename_output_md or self.config.rename_source_pdf) and self.config.active_schema == "none":
-            self.log_frame.append(
-                "Attenzione: la rinomina automatica richiede uno schema di estrazione attivo. "
-                "Con schema 'none' i file non verranno rinominati.",
-                "WARNING",
-            )
-
     def _cancel_processing(self) -> None:
         """Cancel the running pipeline."""
         if self.worker:

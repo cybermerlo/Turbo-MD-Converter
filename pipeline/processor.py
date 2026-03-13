@@ -365,9 +365,6 @@ class DocumentProcessor:
                         self.emit(FileRenamedEvent(
                             original_path=fp, new_path=actual_path, file_type="md",
                         ))
-                        self.emit(LogEvent(
-                            message=f"File MD rinominato: {fp.name} -> {actual_path.name}"
-                        ))
                         renamed_outputs[i] = actual_path
                     except OSError as e:
                         self.emit(LogEvent(
@@ -381,9 +378,6 @@ class DocumentProcessor:
                 actual_pdf_path = rename_file(pdf_path, new_pdf_path)
                 self.emit(FileRenamedEvent(
                     original_path=pdf_path, new_path=actual_pdf_path, file_type="pdf",
-                ))
-                self.emit(LogEvent(
-                    message=f"File PDF rinominato: {pdf_path.name} -> {actual_pdf_path.name}"
                 ))
                 renamed_pdf = actual_pdf_path
             except OSError as e:

@@ -16,8 +16,9 @@ _ITALIAN_MONTHS = {
 
 # Ordered list of (pattern_to_search, label_to_use) for known Italian document types.
 # Patterns are matched case-insensitively against the first part of the OCR text.
+# More specific / higher-priority patterns must come before their sub-phrases.
 _DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
-    # More specific patterns must come before their sub-phrases
+    # Legal acts - most specific first
     (r"comparsa\s+di\s+costituzione\s+e\s+risposta", "Comparsa di Costituzione e Risposta"),
     (r"comparsa\s+di\s+costituzione", "Comparsa di Costituzione"),
     (r"comparsa\s+conclusionale", "Comparsa Conclusionale"),
@@ -33,13 +34,28 @@ _DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
     (r"\bordinanza\b", "Ordinanza"),
     (r"\bprecetto\b", "Precetto"),
     (r"\bpignoramento\b", "Pignoramento"),
+    # Diffida before contratto: a "diffida" doc often also mentions "contratto"
     (r"\bdiffida\b", "Diffida"),
     (r"\bprocura\b", "Procura"),
     (r"atto\s+notarile", "Atto Notarile"),
-    (r"\bcontratto\b", "Contratto"),
     (r"verbale\s+di\s+udienza", "Verbale di Udienza"),
+    (r"verbale\s+d['']udienza", "Verbale di Udienza"),
+    # Court/expert reports
+    (r"elaborato\s+peritale", "Elaborato Peritale"),
+    (r"\bperizia\b", "Perizia"),
+    (r"relazione\s+tecnica", "Relazione Tecnica"),
+    # Commercial documents
+    (r"distinta\s+bonific", "Distinta Bonifico"),
+    (r"\bbonifico\b", "Bonifico"),
+    (r"documento\s+di\s+trasporto|bolla\s+di\s+consegna|\bddt\b", "DDT"),
+    (r"\bpreventivo\b", "Preventivo"),
+    (r"conferma\s+(d[''])?ordine|ordine\s+di\s+acquisto", "Ordine"),
     (r"\bfattura\b", "Fattura"),
     (r"estratto\s+conto", "Estratto Conto"),
+    (r"\bcontratto\b", "Contratto"),
+    # Correspondence — check after legal/commercial to avoid false positives
+    (r"\boggetto\s*:", "Corrispondenza"),
+    (r"\bpec\b", "PEC"),
 ]
 
 # Lines matching these patterns are skipped when looking for a title fallback.
@@ -48,7 +64,9 @@ _DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
 _SKIP_LINE_RE = re.compile(r"^\s*$|@|^\s*\d[\d\s./,\-]{3,}$")
 _SKIP_LINE_RE_I = re.compile(
     r"tel[.:\s]|fax[.:\s]|p\.?\s*iva|c\.?\s*f\.?|pec\b"
-    r"|(via|viale|piazza|corso|largo)\s+\w|cap\s*\d{5}",
+    r"|(via|viale|piazza|corso|largo)\s+\w|cap\s*\d{5}"
+    # OCR page separator markers like "--- Pagina 1 ---" or "--- Page 2 ---"
+    r"|^-{2,}.*-{2,}$",
     re.IGNORECASE,
 )
 

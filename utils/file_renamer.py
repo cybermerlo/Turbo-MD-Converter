@@ -52,9 +52,9 @@ _DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
     (r"conferma\s+(d[''])?ordine|ordine\s+di\s+acquisto", "Ordine"),
     (r"\bfattura\b", "Fattura"),
     (r"estratto\s+conto", "Estratto Conto"),
+    (r"\bdichiarazione\b", "Dichiarazione"),
+    (r"\bvisura\b", "Visura"),
     (r"\bcontratto\b", "Contratto"),
-    # Correspondence — check after legal/commercial to avoid false positives
-    (r"\boggetto\s*:", "Corrispondenza"),
     (r"\bpec\b", "PEC"),
 ]
 
@@ -106,6 +106,15 @@ def _parse_italian_date(text: str) -> str | None:
     if m:
         day, month, year = m.groups()
         return f"{year}{int(month):02d}{int(day):02d}"
+
+    # Format: Italian month name inside a longer string
+    # e.g. "Sandrigo, 30 Agosto 2023" or "del 15 marzo 2024"
+    m = re.search(r"(\d{1,2})\s+([a-zA-ZàèéìòùÀÈÉÌÒÙ]+)\s+(\d{4})", text)
+    if m:
+        day, month_name, year = m.groups()
+        month_num = _ITALIAN_MONTHS.get(month_name.lower())
+        if month_num:
+            return f"{year}{month_num:02d}{int(day):02d}"
 
     return None
 
@@ -173,21 +182,42 @@ def _find_date_from_text(text: str) -> str | None:
     return None
 
 
+def _extract_oggetto_subject(text: str) -> str | None:
+    """Extract the subject from an 'Oggetto:' line in the text.
+
+    Returns the subject text (e.g. 'Dichiarazione porta blindata rif. Cecchin'),
+    or None if no 'Oggetto:' line is found.
+    """
+    m = re.search(r"\boggetto\s*:\s*(.+)", text, re.IGNORECASE)
+    if m:
+        subject = m.group(1).strip()
+        # Only use if it's meaningful (not just punctuation or very short)
+        if len(subject) >= 5 and sum(1 for c in subject if c.isalpha()) >= 4:
+            return _shorten_name(subject, max_len=80)
+    return None
+
+
 def _find_description_from_text(text: str) -> str | None:
     """Extract a content description from raw OCR text without an LLM call.
 
     Strategy:
-    1. Look for a known Italian document-type keyword (highest priority).
-    2. Fall back to the first meaningful non-header line in the text.
+    1. Look for an "Oggetto:" line and use its subject text (most specific).
+    2. Look for a known Italian document-type keyword.
+    3. Fall back to the first meaningful non-header line in the text.
     """
     sample = text[:4000]
 
-    # 1. Keyword match for known document types (longest/most-specific first)
+    # 1. "Oggetto:" subject — the most informative description available
+    subject = _extract_oggetto_subject(sample)
+    if subject:
+        return subject
+
+    # 2. Keyword match for known document types (longest/most-specific first)
     for pattern, label in _DOCUMENT_TYPE_PATTERNS:
         if re.search(pattern, sample, re.IGNORECASE):
             return label
 
-    # 2. First meaningful line that doesn't look like a header/address/contact
+    # 3. First meaningful line that doesn't look like a header/address/contact
     for line in sample.split('\n'):
         line = line.strip()
         if len(line) < 6 or len(line) > 120:

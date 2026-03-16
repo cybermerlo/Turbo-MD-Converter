@@ -18,7 +18,7 @@ class AppConfig:
     ocr_model_id: str = "gemini-3.1-flash-lite-preview"
     extraction_model_id: str = "gemini-3.1-flash-lite-preview"
     ocr_prompt: str = ""
-    active_schema: str = "none"
+    active_schema: str = "full_legal"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
     extraction_passes: int = 1
     max_workers: int = 15
@@ -26,6 +26,8 @@ class AppConfig:
     page_dpi: int = 200
     jpeg_quality: int = 85
     include_ocr_text_in_output: bool = True
+    run_ocr: bool = True
+    run_extraction: bool = False
     rename_output_md: bool = False
     rename_source_pdf: bool = False
     use_output_subfolder: bool = False

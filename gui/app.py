@@ -98,6 +98,31 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         ctk.CTkLabel(format_row, text="Markdown").pack(side="left")
 
+        # Phase selection checkboxes
+        phases_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
+        phases_row.pack(padx=10, pady=(0, 5), fill="x")
+
+        ctk.CTkLabel(phases_row, text="Fasi:", font=ctk.CTkFont(weight="bold")).pack(
+            side="left", padx=(0, 10)
+        )
+        self.run_ocr_var = ctk.BooleanVar(value=self.config.run_ocr)
+        self.run_ocr_cb = ctk.CTkCheckBox(
+            phases_row, text="OCR",
+            variable=self.run_ocr_var,
+            command=self._on_phases_changed,
+            width=70,
+        )
+        self.run_ocr_cb.pack(side="left", padx=(0, 10))
+
+        self.run_extraction_var = ctk.BooleanVar(value=self.config.run_extraction)
+        self.run_extraction_cb = ctk.CTkCheckBox(
+            phases_row, text="LangExtract",
+            variable=self.run_extraction_var,
+            command=self._on_phases_changed,
+            width=120,
+        )
+        self.run_extraction_cb.pack(side="left")
+
         # OCR Model selector
         model_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
         model_row.pack(padx=10, pady=(0, 5), fill="x")
@@ -108,10 +133,11 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.model_var = ctk.StringVar(
             value=self.config.ocr_model_id if self.config.ocr_model_id in AVAILABLE_OCR_MODELS else AVAILABLE_OCR_MODELS[0]
         )
-        ctk.CTkOptionMenu(
+        self.model_menu = ctk.CTkOptionMenu(
             model_row, values=AVAILABLE_OCR_MODELS,
             variable=self.model_var, width=230,
-        ).pack(side="left")
+        )
+        self.model_menu.pack(side="left")
 
         # Schema selector
         schema_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
@@ -121,10 +147,14 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             side="left", padx=(0, 10)
         )
         self.schema_var = ctk.StringVar(value=self.config.active_schema)
-        ctk.CTkOptionMenu(
+        self.schema_menu = ctk.CTkOptionMenu(
             schema_row, values=SCHEMA_PRESET_NAMES,
             variable=self.schema_var, width=230,
-        ).pack(side="left")
+        )
+        self.schema_menu.pack(side="left")
+
+        # Apply initial greying state
+        self._on_phases_changed()
 
         # Rename options
         rename_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
@@ -323,17 +353,28 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if not pdf_paths:
             return
 
+        run_ocr = self.run_ocr_var.get()
+        run_extraction = self.run_extraction_var.get()
+
+        # At least one phase must be selected
+        if not run_ocr and not run_extraction:
+            self.log_frame.append(
+                "Selezionare almeno una fase (OCR o LangExtract).", "ERROR"
+            )
+            return
+
         # Gemini API key is required for PDF OCR or structured extraction.
-        # It is not required when processing only TXT/EML files with schema 'none'.
         has_pdf = any(p.suffix.lower() == ".pdf" for p in pdf_paths)
-        schema_active = self.schema_var.get() != "none"
-        if not self.config.gemini_api_key and (has_pdf or schema_active):
+        needs_api_key = (has_pdf and run_ocr) or run_extraction
+        if not self.config.gemini_api_key and needs_api_key:
             self.log_frame.append(
                 "Chiave API Gemini non configurata. Apri Impostazioni.", "ERROR"
             )
             return
 
-        # Update model from selector (both OCR and extraction use the same model)
+        # Update config from UI
+        self.config.run_ocr = run_ocr
+        self.config.run_extraction = run_extraction
         self.config.ocr_model_id = self.model_var.get()
         self.config.extraction_model_id = self.model_var.get()
         self.config.active_schema = self.schema_var.get()
@@ -358,9 +399,14 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.worker = PipelineWorker(self.config, self.gui_queue)
         self.worker.start(pdf_paths)
 
+        phases = []
+        if run_ocr:
+            phases.append(f"OCR [{self.config.ocr_model_id}]")
+        if run_extraction:
+            phases.append(f"LangExtract [schema: {self.config.active_schema}]")
         self.log_frame.append(
             f"Avviata elaborazione di {len(pdf_paths)} documenti "
-            f"(modello: {self.config.ocr_model_id}, schema: {self.config.active_schema})"
+            f"(fasi: {' + '.join(phases)})"
         )
 
     def _cancel_processing(self) -> None:
@@ -388,14 +434,26 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """Called when the subfolder checkbox changes."""
         self.config.use_output_subfolder = self.use_subfolder_var.get()
 
+    def _on_phases_changed(self) -> None:
+        """Grey/ungrey OCR model and schema selectors based on phase checkboxes."""
+        ocr_on = self.run_ocr_var.get()
+        ext_on = self.run_extraction_var.get()
+        # Model is shared by both phases — disable only when neither is active
+        model_state = "normal" if (ocr_on or ext_on) else "disabled"
+        self.model_menu.configure(state=model_state)
+        self.schema_menu.configure(state="normal" if ext_on else "disabled")
+
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""
         self.config = config
+        self.run_ocr_var.set(config.run_ocr)
+        self.run_extraction_var.set(config.run_extraction)
         self.model_var.set(config.ocr_model_id)
         self.schema_var.set(config.active_schema)
         self.rename_md_var.set(config.rename_output_md)
         self.rename_pdf_var.set(config.rename_source_pdf)
         self.use_subfolder_var.set(config.use_output_subfolder)
+        self._on_phases_changed()
         self.subfolder_checkbox.configure(
             text=f"Salva MD in sottocartella \"{config.output_subfolder_name}\""
         )

@@ -91,9 +91,13 @@ class DocumentProcessor:
         self.cost_tracker.reset()
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
-        # Phase 1: OCR (skipped for TXT/EML - read text directly)
+        # Phase 1: Text acquisition (OCR for PDF, direct read for TXT/EML,
+        #          or sidecar .txt if OCR is disabled for a PDF)
         suffix = pdf_path.suffix.lower()
-        if suffix in (".txt", ".eml"):
+        is_pdf = suffix not in (".txt", ".eml")
+
+        if not is_pdf:
+            # TXT / EML: always read directly, OCR flag is irrelevant
             try:
                 ocr_result = self._read_text_file(pdf_path)
             except Exception as e:
@@ -107,7 +111,44 @@ class DocumentProcessor:
                     cost_info=cost_info,
                 ))
                 return False, cost_info
+
+        elif not self.config.run_ocr:
+            # OCR disabled on a PDF: look for a sidecar .txt file
+            sidecar = pdf_path.with_suffix(".txt")
+            if sidecar.exists():
+                self.emit(LogEvent(
+                    message=f"OCR disabilitato: uso testo da '{sidecar.name}'"
+                ))
+                try:
+                    ocr_result = self._read_text_file(sidecar)
+                except Exception as e:
+                    self.emit(ErrorEvent(
+                        error_message=f"Errore lettura sidecar: {e}",
+                        recoverable=False,
+                    ))
+                    cost_info = self.cost_tracker.get_totals()
+                    self.emit(PipelineCompleteEvent(
+                        pdf_path=pdf_path, success=False,
+                        cost_info=cost_info,
+                    ))
+                    return False, cost_info
+            else:
+                self.emit(ErrorEvent(
+                    error_message=(
+                        f"OCR disabilitato ma nessun file sidecar trovato: "
+                        f"'{sidecar.name}' non esiste"
+                    ),
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
+
         else:
+            # Normal PDF OCR
             try:
                 ocr_result = self.ocr_pipeline.process_pdf(
                     pdf_path=pdf_path,
@@ -131,14 +172,15 @@ class DocumentProcessor:
             self.emit(LogEvent(message="Elaborazione annullata", level="WARNING"))
             return False, self.cost_tracker.get_totals()
 
-        # Log OCR summary
+        # Log text acquisition summary
         ocr_chars = len(ocr_result.combined_text)
-        self.emit(LogEvent(
-            message=(
-                f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
-                f"pagine, {ocr_chars:,} caratteri totali"
-            )
-        ))
+        if is_pdf and self.config.run_ocr:
+            self.emit(LogEvent(
+                message=(
+                    f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
+                    f"pagine, {ocr_chars:,} caratteri totali"
+                )
+            ))
 
         if not ocr_result.combined_text.strip():
             self.emit(ErrorEvent(
@@ -152,11 +194,11 @@ class DocumentProcessor:
             ))
             return False, cost_info
 
-        # Phase 2: Extraction (skip if schema is "none")
-        if self.extractor is None:
-            # No structured extraction - just use OCR text
+        # Phase 2: Extraction (skip if schema is "none" OR extraction is disabled)
+        if not self.config.run_extraction or self.extractor is None:
+            reason = "LangExtract disabilitato" if not self.config.run_extraction else "schema: none"
             self.emit(LogEvent(
-                message="Estrazione strutturata saltata (schema: none)"
+                message=f"Estrazione strutturata saltata ({reason})"
             ))
             extractions = []
         else:

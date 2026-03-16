@@ -265,16 +265,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self.schema_preview.configure(state="disabled")
 
         # Enable/disable edit button
-        if schema_name == "none":
-            self.edit_schema_btn.configure(state="disabled")
-        else:
-            self.edit_schema_btn.configure(state="normal")
+        self.edit_schema_btn.configure(state="normal")
 
     def _get_schema_prompt(self, schema_name: str) -> str:
         """Get the prompt description for a schema."""
-        if schema_name == "none":
-            return ""
-
         # Check for custom override first
         custom_prompts = getattr(self.config, "custom_schema_prompts", {})
         if schema_name in custom_prompts:
@@ -292,9 +286,6 @@ class SettingsWindow(ctk.CTkToplevel):
     def _open_schema_editor(self) -> None:
         """Open the schema editor window."""
         schema_name = self.schema_menu.get()
-        if schema_name == "none":
-            return
-
         prompt_text = self._get_schema_prompt(schema_name)
         SchemaEditorWindow(
             self, schema_name, prompt_text,

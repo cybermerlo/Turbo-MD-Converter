@@ -3,6 +3,7 @@
 import email
 import email.policy
 import logging
+import math
 import threading
 from pathlib import Path
 from typing import Callable
@@ -18,6 +19,7 @@ from pipeline.events import (
     BatchCompleteEvent,
     ErrorEvent,
     ExtractionCompleteEvent,
+    ExtractionProgressEvent,
     ExtractionStartEvent,
     FileRenamedEvent,
     LogEvent,
@@ -54,6 +56,8 @@ class DocumentProcessor:
         if schema and config.custom_schema_prompts.get(config.active_schema):
             schema.prompt_description = config.custom_schema_prompts[config.active_schema]
         self.extractor = LegalExtractor(config, schema, self.cost_tracker) if schema else None
+        if self.extractor:
+            self.extractor.set_progress_callback(self._on_extraction_progress)
 
         self.md_formatter = MarkdownFormatter()
         self.json_formatter = JSONFormatter()
@@ -127,6 +131,15 @@ class DocumentProcessor:
             self.emit(LogEvent(message="Elaborazione annullata", level="WARNING"))
             return False, self.cost_tracker.get_totals()
 
+        # Log OCR summary
+        ocr_chars = len(ocr_result.combined_text)
+        self.emit(LogEvent(
+            message=(
+                f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
+                f"pagine, {ocr_chars:,} caratteri totali"
+            )
+        ))
+
         if not ocr_result.combined_text.strip():
             self.emit(ErrorEvent(
                 error_message="Nessun testo estratto dall'OCR",
@@ -147,12 +160,21 @@ class DocumentProcessor:
             ))
             extractions = []
         else:
+            text_len = len(ocr_result.combined_text)
+            est_chunks = math.ceil(text_len / self.config.max_char_buffer) if self.config.max_char_buffer > 0 else 1
             self.emit(ExtractionStartEvent(
-                total_text_length=len(ocr_result.combined_text),
+                total_text_length=text_len,
                 schema_name=self.config.active_schema,
             ))
             self.emit(LogEvent(
-                message=f"Inizio estrazione strutturata ({len(ocr_result.combined_text)} caratteri)"
+                message=(
+                    f"Inizio estrazione strutturata: {text_len:,} caratteri, "
+                    f"~{est_chunks} chunk (buffer={self.config.max_char_buffer}), "
+                    f"modello={self.config.extraction_model_id}, "
+                    f"schema={self.config.active_schema}, "
+                    f"pass={self.config.extraction_passes}, "
+                    f"workers={self.config.max_workers}"
+                )
             ))
 
             try:
@@ -401,6 +423,14 @@ class DocumentProcessor:
             page_cost=cost,
         ))
 
+        status = "OK" if success else "ERRORE"
+        self.emit(LogEvent(
+            message=(
+                f"OCR pagina {page_num + 1}/{total_pages} [{status}] "
+                f"- {in_tok + out_tok:,} token, ${cost:.4f}"
+            )
+        ))
+
     def _on_page_skipped(self, page_num: int, total_pages: int, reason: str) -> None:
         """Callback from OCR pipeline when a page returns empty text."""
         self.emit(PageSkippedEvent(
@@ -408,6 +438,10 @@ class DocumentProcessor:
             total_pages=total_pages,
             reason=reason,
         ))
+
+    def _on_extraction_progress(self, **kwargs) -> None:
+        """Callback from LegalExtractor as batches of chunks complete."""
+        self.emit(ExtractionProgressEvent(**kwargs))
 
     def _read_text_file(self, file_path: Path):
         """Read text content directly from TXT or EML files (no OCR needed)."""

@@ -57,17 +57,44 @@ class ProgressFrame(ctk.CTkFrame):
         )
 
     def update_extraction_start(self, text_length: int, schema: str) -> None:
-        """Show extraction has started."""
+        """Show extraction has started with chunk estimation."""
         self.ext_label.configure(
-            text=f"Estrazione in corso... ({text_length:,} caratteri, schema: {schema})"
+            text=f"Estrazione: avvio... ({text_length:,} caratteri, schema: {schema})"
         )
-        self.ext_progress.configure(mode="indeterminate")
-        self.ext_progress.start()
+        self.ext_progress.set(0)
+
+    def update_extraction_progress(
+        self, chunks_done: int, total_chunks: int,
+        chars_processed: int, total_chars: int,
+        pass_num: int, total_passes: int,
+    ) -> None:
+        """Update extraction progress bar with chunk-level info."""
+        progress = chunks_done / total_chunks if total_chunks > 0 else 0
+        # When multiple passes, scale progress across all passes
+        if total_passes > 1:
+            pass_weight = 1.0 / total_passes
+            progress = (pass_num - 1) * pass_weight + progress * pass_weight
+
+        self.ext_progress.set(min(progress, 1.0))
+
+        if total_passes > 1:
+            self.ext_label.configure(
+                text=(
+                    f"Estrazione: chunk {chunks_done}/{total_chunks} "
+                    f"({chars_processed:,}/{total_chars:,} car.) "
+                    f"- pass {pass_num}/{total_passes}"
+                )
+            )
+        else:
+            self.ext_label.configure(
+                text=(
+                    f"Estrazione: chunk {chunks_done}/{total_chunks} "
+                    f"({chars_processed:,}/{total_chars:,} car.)"
+                )
+            )
 
     def update_extraction_complete(self, count: int) -> None:
         """Show extraction is complete."""
-        self.ext_progress.stop()
-        self.ext_progress.configure(mode="determinate")
         self.ext_progress.set(1.0)
         self.ext_label.configure(
             text=f"Estrazione completata: {count} entita' estratte"
@@ -97,8 +124,6 @@ class ProgressFrame(ctk.CTkFrame):
         """Reset all progress indicators."""
         self.ocr_progress.set(0)
         self.ocr_label.configure(text="OCR: In attesa...")
-        self.ext_progress.stop()
-        self.ext_progress.configure(mode="determinate")
         self.ext_progress.set(0)
         self.ext_label.configure(text="Estrazione: In attesa...")
         self.cost_label.configure(text="Costo: $0.0000 | Token: 0")

@@ -7,6 +7,9 @@ import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from config.defaults import AVAILABLE_OCR_MODELS, SCHEMA_PRESET_NAMES
+
+_RENAME_MODE_LABELS = {"md": "Solo MD", "pdf": "Solo PDF", "both": "Entrambi"}
+_RENAME_LABEL_TO_MODE = {v: k for k, v in _RENAME_MODE_LABELS.items()}
 from config.settings import AppConfig, load_config, save_config
 from gui.frames.input_frame import InputFrame
 from gui.frames.log_frame import LogFrame
@@ -121,7 +124,25 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             command=self._on_phases_changed,
             width=120,
         )
-        self.run_extraction_cb.pack(side="left")
+        self.run_extraction_cb.pack(side="left", padx=(0, 10))
+
+        self.rename_files_var = ctk.BooleanVar(value=self.config.rename_files)
+        self.rename_cb = ctk.CTkCheckBox(
+            phases_row, text="Rinomina",
+            variable=self.rename_files_var,
+            command=self._on_rename_changed,
+            width=100,
+        )
+        self.rename_cb.pack(side="left", padx=(0, 5))
+
+        self.rename_mode_var = ctk.StringVar(
+            value=_RENAME_MODE_LABELS.get(self.config.rename_mode, "Entrambi")
+        )
+        self.rename_mode_menu = ctk.CTkOptionMenu(
+            phases_row, values=list(_RENAME_MODE_LABELS.values()),
+            variable=self.rename_mode_var, width=110,
+        )
+        self.rename_mode_menu.pack(side="left")
 
         # OCR Model selector
         model_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
@@ -155,25 +176,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Apply initial greying state
         self._on_phases_changed()
-
-        # Rename options
-        rename_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        rename_row.pack(padx=10, pady=(0, 5), fill="x")
-
-        ctk.CTkLabel(rename_row, text="Rinomina:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=(0, 10)
-        )
-        self.rename_md_var = ctk.BooleanVar(value=self.config.rename_output_md)
-        ctk.CTkCheckBox(
-            rename_row, text="MD",
-            variable=self.rename_md_var, width=60,
-        ).pack(side="left", padx=(0, 5))
-
-        self.rename_pdf_var = ctk.BooleanVar(value=self.config.rename_source_pdf)
-        ctk.CTkCheckBox(
-            rename_row, text="PDF sorgente",
-            variable=self.rename_pdf_var, width=120,
-        ).pack(side="left")
+        self._on_rename_changed()
 
         # Subfolder output checkbox
         subfolder_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
@@ -378,8 +381,8 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.ocr_model_id = self.model_var.get()
         self.config.extraction_model_id = self.model_var.get()
         self.config.active_schema = self.schema_var.get()
-        self.config.rename_output_md = self.rename_md_var.get()
-        self.config.rename_source_pdf = self.rename_pdf_var.get()
+        self.config.rename_files = self.rename_files_var.get()
+        self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
         self.config.use_output_subfolder = self.use_subfolder_var.get()
 
         # Output format is always markdown
@@ -443,6 +446,11 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.model_menu.configure(state=model_state)
         self.schema_menu.configure(state="normal" if ext_on else "disabled")
 
+    def _on_rename_changed(self) -> None:
+        """Enable/disable rename mode dropdown based on rename checkbox."""
+        state = "normal" if self.rename_files_var.get() else "disabled"
+        self.rename_mode_menu.configure(state=state)
+
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""
         self.config = config
@@ -450,8 +458,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.run_extraction_var.set(config.run_extraction)
         self.model_var.set(config.ocr_model_id)
         self.schema_var.set(config.active_schema)
-        self.rename_md_var.set(config.rename_output_md)
-        self.rename_pdf_var.set(config.rename_source_pdf)
+        self.rename_files_var.set(config.rename_files)
+        self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
+        self._on_rename_changed()
         self.use_subfolder_var.set(config.use_output_subfolder)
         self._on_phases_changed()
         self.subfolder_checkbox.configure(

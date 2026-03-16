@@ -9,6 +9,9 @@ from config.defaults import DEFAULT_OCR_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_O
 from config.settings import AppConfig
 from extraction.schemas import get_schema_preset, get_available_schemas
 
+_RENAME_MODE_LABELS = {"md": "Solo MD", "pdf": "Solo PDF", "both": "Entrambi"}
+_RENAME_LABEL_TO_MODE = {v: k for k, v in _RENAME_MODE_LABELS.items()}
+
 
 class SchemaEditorWindow(ctk.CTkToplevel):
     """Window for editing a schema's prompt description."""
@@ -364,22 +367,31 @@ class SettingsWindow(ctk.CTkToplevel):
             tab,
             text="Formato: YYYYMMDD - Descrizione del contenuto.ext\n"
                  "Ricavato automaticamente dai dati estratti (nessuna chiamata LLM aggiuntiva).\n"
-                 "Richiede che sia attivo uno schema di estrazione (non 'none').",
+                 "Richiede che sia attivo uno schema di estrazione.",
             font=ctk.CTkFont(size=11), text_color="gray60",
             justify="left",
         ).pack(padx=10, pady=(0, 5), anchor="w")
 
-        self.rename_md_var = ctk.BooleanVar(value=self.config.rename_output_md)
-        ctk.CTkCheckBox(
-            tab, text="Rinomina file MD di output",
-            variable=self.rename_md_var,
-        ).pack(padx=10, pady=2, anchor="w")
+        rename_row = ctk.CTkFrame(tab, fg_color="transparent")
+        rename_row.pack(padx=10, pady=2, anchor="w")
 
-        self.rename_pdf_var = ctk.BooleanVar(value=self.config.rename_source_pdf)
-        ctk.CTkCheckBox(
-            tab, text="Rinomina file PDF sorgente",
-            variable=self.rename_pdf_var,
-        ).pack(padx=10, pady=2, anchor="w")
+        self.rename_files_var = ctk.BooleanVar(value=self.config.rename_files)
+        self.rename_cb = ctk.CTkCheckBox(
+            rename_row, text="Attiva rinomina",
+            variable=self.rename_files_var,
+            command=self._on_rename_changed,
+        )
+        self.rename_cb.pack(side="left", padx=(0, 10))
+
+        self.rename_mode_var = ctk.StringVar(
+            value=_RENAME_MODE_LABELS.get(self.config.rename_mode, "Entrambi")
+        )
+        self.rename_mode_menu = ctk.CTkOptionMenu(
+            rename_row, values=list(_RENAME_MODE_LABELS.values()),
+            variable=self.rename_mode_var, width=110,
+        )
+        self.rename_mode_menu.pack(side="left")
+        self._on_rename_changed()
 
     def _toggle_key_visibility(self) -> None:
         show = "" if self.show_key_var.get() else "*"
@@ -394,6 +406,11 @@ class SettingsWindow(ctk.CTkToplevel):
         if folder:
             self.output_dir_entry.delete(0, "end")
             self.output_dir_entry.insert(0, folder)
+
+    def _on_rename_changed(self) -> None:
+        """Enable/disable rename mode dropdown based on rename checkbox."""
+        state = "normal" if self.rename_files_var.get() else "disabled"
+        self.rename_mode_menu.configure(state=state)
 
     def _save(self) -> None:
         """Apply settings and close."""
@@ -411,8 +428,8 @@ class SettingsWindow(ctk.CTkToplevel):
         subfolder_name = self.subfolder_name_entry.get().strip()
         if subfolder_name:
             self.config.output_subfolder_name = subfolder_name
-        self.config.rename_output_md = self.rename_md_var.get()
-        self.config.rename_source_pdf = self.rename_pdf_var.get()
+        self.config.rename_files = self.rename_files_var.get()
+        self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
 
         self.on_save(self.config)
         self.destroy()

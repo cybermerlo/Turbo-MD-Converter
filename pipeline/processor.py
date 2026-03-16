@@ -251,7 +251,7 @@ class DocumentProcessor:
             # When renaming is enabled, use the future renamed filename in the MD
             # header so the title matches the file that ends up on disk.
             header_filename = pdf_path.name
-            if self.config.rename_output_md or self.config.rename_source_pdf:
+            if self.config.rename_files:
                 if extractions:
                     _rename_result = derive_filename(extractions, self.config.active_schema)
                 else:
@@ -301,7 +301,7 @@ class DocumentProcessor:
         # Phase 4: Rename files based on extracted content (if enabled)
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
-        if self.config.rename_output_md or self.config.rename_source_pdf:
+        if self.config.rename_files:
             renamed_pdf_path, renamed_output_files = self._rename_files(
                 pdf_path, output_files, extractions, ocr_result.combined_text,
             )
@@ -420,7 +420,7 @@ class DocumentProcessor:
         renamed_outputs = list(output_files)
 
         # Rename output MD file
-        if self.config.rename_output_md:
+        if self.config.rename_mode in ("md", "both"):
             for i, fp in enumerate(renamed_outputs):
                 if fp.suffix.lower() == ".md":
                     new_path = build_new_filepath(fp, date_str, description)
@@ -436,7 +436,7 @@ class DocumentProcessor:
                         ))
 
         # Rename source PDF
-        if self.config.rename_source_pdf:
+        if self.config.rename_mode in ("pdf", "both"):
             new_pdf_path = build_new_filepath(pdf_path, date_str, description)
             try:
                 actual_pdf_path = rename_file(pdf_path, new_pdf_path)

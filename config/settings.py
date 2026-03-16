@@ -28,8 +28,8 @@ class AppConfig:
     include_ocr_text_in_output: bool = True
     run_ocr: bool = True
     run_extraction: bool = False
-    rename_output_md: bool = False
-    rename_source_pdf: bool = False
+    rename_files: bool = False
+    rename_mode: str = "both"
     use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
     custom_schema_prompts: dict = field(default_factory=dict)

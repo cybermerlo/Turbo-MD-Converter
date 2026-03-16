@@ -438,10 +438,12 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _on_phases_changed(self) -> None:
         """Grey/ungrey OCR model and schema selectors based on phase checkboxes."""
-        ocr_state = "normal" if self.run_ocr_var.get() else "disabled"
-        ext_state = "normal" if self.run_extraction_var.get() else "disabled"
-        self.model_menu.configure(state=ocr_state)
-        self.schema_menu.configure(state=ext_state)
+        ocr_on = self.run_ocr_var.get()
+        ext_on = self.run_extraction_var.get()
+        # Model is shared by both phases — disable only when neither is active
+        model_state = "normal" if (ocr_on or ext_on) else "disabled"
+        self.model_menu.configure(state=model_state)
+        self.schema_menu.configure(state="normal" if ext_on else "disabled")
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""

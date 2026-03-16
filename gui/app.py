@@ -364,10 +364,8 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         # Gemini API key is required for PDF OCR or structured extraction.
-        # It is not required when processing only TXT/EML files with schema 'none'.
         has_pdf = any(p.suffix.lower() == ".pdf" for p in pdf_paths)
-        schema_active = self.schema_var.get() != "none" and run_extraction
-        needs_api_key = (has_pdf and run_ocr) or schema_active
+        needs_api_key = (has_pdf and run_ocr) or run_extraction
         if not self.config.gemini_api_key and needs_api_key:
             self.log_frame.append(
                 "Chiave API Gemini non configurata. Apri Impostazioni.", "ERROR"

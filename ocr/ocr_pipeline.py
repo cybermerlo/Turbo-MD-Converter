@@ -72,7 +72,11 @@ class OCRPipeline:
             OCRResult with all page texts and combined output.
         """
         total_pages = self.converter.get_page_count(pdf_path)
-        logger.info("Inizio OCR di '%s' (%d pagine)", pdf_path.name, total_pages)
+        logger.info(
+            "Inizio OCR di '%s' (%d pagine, modello=%s, DPI=%d)",
+            pdf_path.name, total_pages, self.model_id,
+            self.converter.dpi,
+        )
 
         result = OCRResult(pdf_path=pdf_path, total_pages=total_pages)
         page_texts = []
@@ -89,6 +93,11 @@ class OCRPipeline:
             if page_result.success:
                 result.successful_pages += 1
                 page_texts.append(page_result.text)
+                logger.info(
+                    "Pagina %d/%d OK: %d caratteri, %d+%d token",
+                    page_num + 1, total_pages, len(page_result.text),
+                    page_result.input_tokens, page_result.output_tokens,
+                )
                 # Warn if page was processed but returned no text
                 if not page_result.text.strip() and on_page_skipped:
                     logger.warning(
@@ -97,6 +106,10 @@ class OCRPipeline:
                     )
                     on_page_skipped(page_num, total_pages, "Nessun testo estratto (RECITATION o pagina vuota)")
             else:
+                logger.error(
+                    "Pagina %d/%d ERRORE: %s",
+                    page_num + 1, total_pages, page_result.error,
+                )
                 page_texts.append(f"[Pagina {page_num + 1}: OCR non riuscito]")
 
             if on_page_complete:

@@ -17,6 +17,7 @@ from pipeline.events import (
     BatchCompleteEvent,
     ErrorEvent,
     ExtractionCompleteEvent,
+    ExtractionProgressEvent,
     ExtractionStartEvent,
     FileRenamedEvent,
     LogEvent,
@@ -253,6 +254,13 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 event.total_text_length, event.schema_name,
             )
 
+        elif isinstance(event, ExtractionProgressEvent):
+            self.progress_frame.update_extraction_progress(
+                event.chunks_done, event.total_chunks,
+                event.chars_processed, event.total_chars,
+                event.pass_num, event.total_passes,
+            )
+
         elif isinstance(event, ExtractionCompleteEvent):
             self.progress_frame.update_extraction_complete(event.extraction_count)
 
@@ -350,7 +358,10 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.worker = PipelineWorker(self.config, self.gui_queue)
         self.worker.start(pdf_paths)
 
-        self.log_frame.append(f"Avviata elaborazione di {len(pdf_paths)} documenti")
+        self.log_frame.append(
+            f"Avviata elaborazione di {len(pdf_paths)} documenti "
+            f"(modello: {self.config.ocr_model_id}, schema: {self.config.active_schema})"
+        )
 
     def _cancel_processing(self) -> None:
         """Cancel the running pipeline."""

@@ -31,6 +31,17 @@ class ExtractionStartEvent(PipelineEvent):
 
 
 @dataclass
+class ExtractionProgressEvent(PipelineEvent):
+    """Emitted as extraction processes each batch of chunks."""
+    chunks_done: int = 0
+    total_chunks: int = 0
+    chars_processed: int = 0
+    total_chars: int = 0
+    pass_num: int = 1
+    total_passes: int = 1
+
+
+@dataclass
 class ExtractionCompleteEvent(PipelineEvent):
     """Emitted when extraction phase completes."""
     extraction_count: int = 0

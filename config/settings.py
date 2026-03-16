@@ -26,6 +26,8 @@ class AppConfig:
     page_dpi: int = 200
     jpeg_quality: int = 85
     include_ocr_text_in_output: bool = True
+    run_ocr: bool = True
+    run_extraction: bool = True
     rename_output_md: bool = False
     rename_source_pdf: bool = False
     use_output_subfolder: bool = False

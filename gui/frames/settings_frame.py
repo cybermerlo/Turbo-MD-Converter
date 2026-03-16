@@ -410,6 +410,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.langextract_api_key = self.config.gemini_api_key
         self.config.ocr_prompt = self.ocr_prompt_text.get("1.0", "end").strip()
         self.config.ocr_model_id = self.ocr_model_menu.get()
+        self.config.extraction_model_id = self.ocr_model_menu.get()
         self.config.page_dpi = int(self.dpi_slider.get())
         self.config.active_schema = self.schema_menu.get()
         self.config.extraction_passes = int(self.passes_slider.get())

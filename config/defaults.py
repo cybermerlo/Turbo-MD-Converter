@@ -15,6 +15,7 @@ Regole:
 AVAILABLE_OCR_MODELS = [
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
 ]
 
 # Page separator used when combining OCR results

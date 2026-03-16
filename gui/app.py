@@ -325,8 +325,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             )
             return
 
-        # Update model from selector
+        # Update model from selector (both OCR and extraction use the same model)
         self.config.ocr_model_id = self.model_var.get()
+        self.config.extraction_model_id = self.model_var.get()
         self.config.active_schema = self.schema_var.get()
         self.config.rename_output_md = self.rename_md_var.get()
         self.config.rename_source_pdf = self.rename_pdf_var.get()

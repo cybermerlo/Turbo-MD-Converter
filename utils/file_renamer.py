@@ -28,10 +28,10 @@ future o qualsiasi altra data incidentale.
    - Se non riesci a determinare con certezza la data del documento, restituisci \
 "00000000".
 
-2. "descrizione": Una descrizione concisa adatta come nome file (massimo 60 caratteri).
-   - Indica tipo di documento e soggetti principali (persone, enti, numero pratica).
-   - Struttura suggerita: "Tipo Documento - Soggetto" oppure \
-"Tipo Documento - Soggetto1 vs Soggetto2"
+2. "descrizione": Una breve descrizione del documento adatta come nome file \
+(massimo 60 caratteri).
+   - Descrivi il contenuto del documento in modo che sia immediatamente \
+riconoscibile leggendo solo il nome del file.
    - Usa maiuscole appropriate (non tutto maiuscolo, non tutto minuscolo).
    - Non usare caratteri non ammessi nei nomi file: < > : " / \\ | ? *
 

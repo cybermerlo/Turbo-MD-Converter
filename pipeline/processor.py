@@ -31,7 +31,7 @@ from pipeline.events import (
 )
 from utils.cost_tracker import CostTracker
 from utils.file_renamer import (
-    build_new_filepath, derive_filename, derive_filename_from_text, rename_file,
+    build_new_filepath, derive_filename_from_llm, rename_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -247,20 +247,23 @@ class DocumentProcessor:
         markdown = None
         json_data = None
 
+        # Derive filename via LLM once, reused for both MD header and actual rename.
+        _rename_result: tuple[str, str] | None = None
+        if self.config.rename_files:
+            _rename_result = derive_filename_from_llm(
+                ocr_text=ocr_result.combined_text,
+                api_key=self.config.gemini_api_key,
+                model_id=self.config.ocr_model_id,
+                original_filename=pdf_path.name,
+            )
+
         if "markdown" in self.config.output_formats:
             # When renaming is enabled, use the future renamed filename in the MD
             # header so the title matches the file that ends up on disk.
             header_filename = pdf_path.name
-            if self.config.rename_files:
-                if extractions:
-                    _rename_result = derive_filename(extractions, self.config.active_schema)
-                else:
-                    _rename_result = derive_filename_from_text(
-                        ocr_result.combined_text, pdf_path.name
-                    )
-                if _rename_result:
-                    _date_str, _description = _rename_result
-                    header_filename = f"{_date_str} - {_description}{pdf_path.suffix}"
+            if _rename_result:
+                _date_str, _description = _rename_result
+                header_filename = f"{_date_str} - {_description}{pdf_path.suffix}"
 
             markdown = self.md_formatter.format(
                 extractions=extractions,
@@ -301,9 +304,9 @@ class DocumentProcessor:
         # Phase 4: Rename files based on extracted content (if enabled)
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
-        if self.config.rename_files:
+        if self.config.rename_files and _rename_result:
             renamed_pdf_path, renamed_output_files = self._rename_files(
-                pdf_path, output_files, extractions, ocr_result.combined_text,
+                pdf_path, output_files, _rename_result,
             )
 
         self.emit(PipelineCompleteEvent(
@@ -388,30 +391,14 @@ class DocumentProcessor:
         self,
         pdf_path: Path,
         output_files: list[Path],
-        extractions: list[dict],
-        ocr_text: str = "",
+        rename_result: tuple[str, str],
     ) -> tuple[Path, list[Path]]:
-        """Rename PDF source and/or MD output based on extraction results or OCR text.
-
-        When extractions are available (active schema), derives the filename from
-        structured data. When extractions is empty (schema 'none'), falls back to
-        scanning the raw OCR text for a date and using the original filename stem.
+        """Rename PDF source and/or MD output using the pre-computed filename parts.
 
         Returns:
             Tuple of (possibly_renamed_pdf_path, possibly_renamed_output_files).
         """
-        if extractions:
-            result = derive_filename(extractions, self.config.active_schema)
-            if result is None:
-                self.emit(LogEvent(
-                    message="Rinomina file: dati insufficienti dalle estrazioni per determinare un nome",
-                    level="WARNING",
-                ))
-                return pdf_path, output_files
-        else:
-            result = derive_filename_from_text(ocr_text, pdf_path.name)
-
-        date_str, description = result
+        date_str, description = rename_result
         self.emit(LogEvent(
             message=f"Rinomina file: data={date_str}, descrizione='{description}'"
         ))

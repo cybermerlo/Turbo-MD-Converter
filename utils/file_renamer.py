@@ -38,12 +38,27 @@ _DOCUMENT_TYPE_PATTERNS: list[tuple[str, str]] = [
     (r"\bdiffida\b", "Diffida"),
     (r"\bprocura\b", "Procura"),
     (r"atto\s+notarile", "Atto Notarile"),
+    # Police / criminal law
+    (r"ricezione\s+querela", "Querela"),
+    (r"\bquerela\b", "Querela"),
+    (r"denuncia.{0,5}querela", "Denuncia-Querela"),
+    (r"\bdenuncia\b", "Denuncia"),
+    (r"verbale\s+di\s+pronto\s+soccorso", "Verbale di Pronto Soccorso"),
+    (r"cartella\s+clinica\s+di\s+ps", "Verbale di Pronto Soccorso"),
+    (r"certificazione\s+(?:medica\s+)?(?:di\s+)?infortunio", "Certificazione Infortunio INAIL"),
+    (r"certificat[oo]\s+inail", "Certificazione INAIL"),
+    (r"referto\s+(?:di\s+)?(?:autorit|pronto)", "Referto"),
+    (r"\breferto\b", "Referto"),
+    # Hearings / verbali
     (r"verbale\s+di\s+udienza", "Verbale di Udienza"),
     (r"verbale\s+d['']udienza", "Verbale di Udienza"),
     # Court/expert reports
     (r"elaborato\s+peritale", "Elaborato Peritale"),
     (r"\bperizia\b", "Perizia"),
     (r"relazione\s+tecnica", "Relazione Tecnica"),
+    # Medical / insurance
+    (r"certificato\s+medico", "Certificato Medico"),
+    (r"cartella\s+clinica", "Cartella Clinica"),
     # Commercial documents
     (r"distinta\s+bonific", "Distinta Bonifico"),
     (r"\bbonifico\b", "Bonifico"),
@@ -66,7 +81,13 @@ _SKIP_LINE_RE_I = re.compile(
     r"tel[.:\s]|fax[.:\s]|p\.?\s*iva|c\.?\s*f\.?|pec\b"
     r"|(via|viale|piazza|corso|largo)\s+\w|cap\s*\d{5}"
     # OCR page separator markers like "--- Pagina 1 ---" or "--- Page 2 ---"
-    r"|^-{2,}.*-{2,}$",
+    r"|^-{2,}.*-{2,}$"
+    # Institutional headers (e.g. "REGIONE DEL VENETO", "Azienda ULSS n. 7")
+    r"|^regione\b|^comune\b|^provincia\b|^prefettura\b"
+    r"|azienda\s+(?:ulss|usl|ospedaliera)"
+    r"|presidio\s+ospedaliero"
+    r"|legione\s+carabinieri|stazione\s+cc\b"
+    r"|^ulss\d",
     re.IGNORECASE,
 )
 
@@ -173,12 +194,117 @@ def _find_date_from_extractions(extractions: list[dict]) -> str | None:
     return None
 
 
+# Patterns that capture a date immediately after a document-date label.
+# Each pattern captures the date portion in group(1..3) or via a named group.
+# Used to extract the date right next to the label, ignoring other dates on the same line.
+_DOC_DATE_EXTRACTORS: list[re.Pattern] = [
+    # "Data ed ora di apertura 25/02/2026", "Data di rilascio 25/02/2026"
+    re.compile(
+        r"data\s+(?:ed?\s+ora\s+)?di\s+"
+        r"(?:apertura|chiusura|rilascio|emissione|redazione|stesura|deposito)"
+        r"\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "Data del verbale 25/02/2026", "Data fattura 25/02/2026"
+    re.compile(
+        r"data\s+(?:del\s+)?(?:verbale|documento|referto|certificato|atto|sentenza|fattura)"
+        r"\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "Data Referto 25/02/2026"
+    re.compile(
+        r"data\s+referto\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "Il giorno 25/02/2026" / "del giorno 25/02/2026"
+    re.compile(
+        r"(?:il|del)\s+giorno\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "in data 25/02/2026" / "addì 25/02/2026"
+    re.compile(
+        r"(?:in\s+data|addì|addi)\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "firmato digitalmente ... in data 25/02/2026"
+    re.compile(
+        r"firmat[oa]\s+.{0,40}(?:in\s+data|il)\s+(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # "le operazioni si sono concluse alle ore 14:20 del 25/02/2026"
+    re.compile(
+        r"le\s+operazioni\s+si\s+sono\s+concluse\s+.{0,30}(\d{1,2})[./](\d{1,2})[./](\d{4})",
+        re.IGNORECASE,
+    ),
+    # Italian month: "data di rilascio 25 febbraio 2026"
+    re.compile(
+        r"data\s+(?:ed?\s+ora\s+)?di\s+"
+        r"(?:apertura|chiusura|rilascio|emissione|redazione|stesura|deposito)"
+        r"\s+(\d{1,2})\s+([a-zA-ZàèéìòùÀÈÉÌÒÙ]+)\s+(\d{4})",
+        re.IGNORECASE,
+    ),
+    # "Il giorno 25 febbraio 2026"
+    re.compile(
+        r"(?:il|del)\s+giorno\s+(\d{1,2})\s+([a-zA-ZàèéìòùÀÈÉÌÒÙ]+)\s+(\d{4})",
+        re.IGNORECASE,
+    ),
+]
+
+# Regex patterns that indicate a date on that line is personal / incidental
+# (birth dates, residence dates, etc.) and should be skipped.
+_PERSONAL_DATE_LABEL_RE = re.compile(
+    r"nat[oa]\s+(?:il|a\s)|data\s+di\s+nascita|GG/MM/YYYY"
+    r"|codice\s+fiscale|c\.?\s*f\.?\s*:"
+    r"|(?:nato|nata)\s+il",
+    re.IGNORECASE,
+)
+
+
 def _find_date_from_text(text: str) -> str | None:
-    """Find the first recognizable date by scanning raw OCR text line by line."""
-    for line in text[:3000].split('\n'):
+    """Find the document date from OCR text using contextual clues.
+
+    Strategy (in priority order):
+    1. Search for dates immediately adjacent to document-date labels
+       (e.g. "Data di rilascio 25/02/2026"). This is precise even when
+       multiple dates appear on the same line.
+    2. Fall back to the first date on a line that does NOT contain
+       personal-date markers (e.g. "Nato il", "Data di nascita").
+    3. Last resort: any date at all.
+    """
+    sample = text[:6000]
+
+    # Pass 1: extract dates right next to document-date labels
+    for extractor in _DOC_DATE_EXTRACTORS:
+        m = extractor.search(sample)
+        if m:
+            groups = m.groups()
+            if len(groups) == 3:
+                g1, g2, g3 = groups
+                # Check if g2 is a month name (Italian) or numeric
+                month_num = _ITALIAN_MONTHS.get(g2.lower()) if g2 else None
+                if month_num is not None:
+                    # day, month_name, year
+                    return f"{g3}{month_num:02d}{int(g1):02d}"
+                else:
+                    # day, month_number, year
+                    return f"{g3}{int(g2):02d}{int(g1):02d}"
+
+    # Pass 2: first date on a line without personal-date markers
+    lines = sample.split('\n')
+    for line in lines:
+        stripped = line.strip()
+        if _PERSONAL_DATE_LABEL_RE.search(stripped):
+            continue
+        parsed = _parse_italian_date(stripped)
+        if parsed:
+            return parsed
+
+    # Pass 3 (last resort): any date at all
+    for line in lines:
         parsed = _parse_italian_date(line.strip())
         if parsed:
             return parsed
+
     return None
 
 

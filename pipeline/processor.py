@@ -250,10 +250,13 @@ class DocumentProcessor:
         # Derive filename via LLM once, reused for both MD header and actual rename.
         _rename_result: tuple[str, str] | None = None
         if self.config.rename_files:
+            from config.defaults import DEFAULT_RENAME_PROMPT
+            rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
             _rename_result = derive_filename_from_llm(
                 ocr_text=ocr_result.combined_text,
                 api_key=self.config.gemini_api_key,
                 model_id=self.config.ocr_model_id,
+                rename_prompt=rename_prompt,
                 original_filename=pdf_path.name,
             )
 

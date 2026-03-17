@@ -5,7 +5,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from config.defaults import DEFAULT_OCR_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_OCR_MODELS
+from config.defaults import DEFAULT_OCR_PROMPT, DEFAULT_RENAME_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_OCR_MODELS
 from config.settings import AppConfig
 from extraction.schemas import get_schema_preset, get_available_schemas
 
@@ -366,8 +366,8 @@ class SettingsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             tab,
             text="Formato: YYYYMMDD - Descrizione del contenuto.ext\n"
-                 "Ricavato automaticamente dai dati estratti (nessuna chiamata LLM aggiuntiva).\n"
-                 "Richiede che sia attivo uno schema di estrazione.",
+                 "Data e descrizione vengono ricavati tramite una chiamata LLM\n"
+                 "sul testo OCR del documento.",
             font=ctk.CTkFont(size=11), text_color="gray60",
             justify="left",
         ).pack(padx=10, pady=(0, 5), anchor="w")
@@ -391,6 +391,24 @@ class SettingsWindow(ctk.CTkToplevel):
             variable=self.rename_mode_var, width=110,
         )
         self.rename_mode_menu.pack(side="left")
+
+        # Prompt editor for rename
+        rename_prompt_row = ctk.CTkFrame(tab, fg_color="transparent")
+        rename_prompt_row.pack(padx=10, pady=(5, 2), anchor="w")
+
+        self.edit_rename_prompt_btn = ctk.CTkButton(
+            rename_prompt_row, text="Modifica Prompt Rinomina",
+            command=self._open_rename_prompt_editor, width=190,
+        )
+        self.edit_rename_prompt_btn.pack(side="left", padx=(0, 5))
+
+        self.reset_rename_prompt_btn = ctk.CTkButton(
+            rename_prompt_row, text="Ripristina Default",
+            command=self._reset_rename_prompt, width=140,
+            fg_color="gray40", hover_color="gray30",
+        )
+        self.reset_rename_prompt_btn.pack(side="left")
+
         self._on_rename_changed()
 
     def _toggle_key_visibility(self) -> None:
@@ -408,9 +426,27 @@ class SettingsWindow(ctk.CTkToplevel):
             self.output_dir_entry.insert(0, folder)
 
     def _on_rename_changed(self) -> None:
-        """Enable/disable rename mode dropdown based on rename checkbox."""
+        """Enable/disable rename controls based on rename checkbox."""
         state = "normal" if self.rename_files_var.get() else "disabled"
         self.rename_mode_menu.configure(state=state)
+        self.edit_rename_prompt_btn.configure(state=state)
+        self.reset_rename_prompt_btn.configure(state=state)
+
+    def _open_rename_prompt_editor(self) -> None:
+        """Open the editor for the rename prompt."""
+        prompt_text = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
+        SchemaEditorWindow(
+            self, "Prompt Rinomina", prompt_text,
+            on_save=self._on_rename_prompt_saved,
+        )
+
+    def _on_rename_prompt_saved(self, _name: str, prompt_text: str) -> None:
+        """Called when the rename prompt is saved from the editor."""
+        self.config.rename_prompt = prompt_text
+
+    def _reset_rename_prompt(self) -> None:
+        """Reset the rename prompt to its default value."""
+        self.config.rename_prompt = ""
 
     def _save(self) -> None:
         """Apply settings and close."""
@@ -430,6 +466,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.config.output_subfolder_name = subfolder_name
         self.config.rename_files = self.rename_files_var.get()
         self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
+        # rename_prompt is already updated live via _on_rename_prompt_saved / _reset_rename_prompt
 
         self.on_save(self.config)
         self.destroy()

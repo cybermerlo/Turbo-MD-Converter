@@ -11,38 +11,6 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Prompt
-# ---------------------------------------------------------------------------
-
-_FILENAME_PROMPT = """\
-Sei un assistente per l'archiviazione documenti di uno studio legale.
-Analizza il testo OCR qui sotto e rispondi SOLO con un oggetto JSON con due campi:
-
-1. "data": La data in cui il documento è stato redatto, firmato, emesso o inviato.
-   - Formato: YYYYMMDD  (es. "20260225")
-   - Cerca la data del documento stesso: data di redazione, firma, emissione, \
-apertura fascicolo, rilascio, chiusura verbale, ecc.
-   - NON usare date di nascita, date di eventi descritti nel documento, scadenze \
-future o qualsiasi altra data incidentale.
-   - Se non riesci a determinare con certezza la data del documento, restituisci \
-"00000000".
-
-2. "descrizione": Una breve descrizione del documento adatta come nome file \
-(massimo 60 caratteri).
-   - Descrivi il contenuto del documento in modo che sia immediatamente \
-riconoscibile leggendo solo il nome del file.
-   - Usa maiuscole appropriate (non tutto maiuscolo, non tutto minuscolo).
-   - Non usare caratteri non ammessi nei nomi file: < > : " / \\ | ? *
-
-Rispondi SOLO con il JSON, nessun altro testo.
-
-Testo OCR:
----
-{ocr_sample}
----
-"""
-
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -52,16 +20,24 @@ def derive_filename_from_llm(
     ocr_text: str,
     api_key: str,
     model_id: str,
+    rename_prompt: str,
     original_filename: str = "",
 ) -> tuple[str, str]:
     """Ask an LLM to derive the document date and a short description.
+
+    Args:
+        ocr_text: Combined OCR text from the document.
+        api_key: Gemini API key.
+        model_id: Gemini model to use.
+        rename_prompt: The prompt template (must contain ``{ocr_sample}``).
+        original_filename: Used as fallback description if LLM fails.
 
     Returns:
         (date_str, description) where date_str is "YYYYMMDD" or "00000000"
         if the date cannot be determined with confidence.
     """
     sample = ocr_text[:5000].strip()
-    prompt = _FILENAME_PROMPT.format(ocr_sample=sample)
+    prompt = rename_prompt.format(ocr_sample=sample)
 
     try:
         client = genai.Client(api_key=api_key)

@@ -30,6 +30,7 @@ class AppConfig:
     run_extraction: bool = False
     rename_files: bool = False
     rename_mode: str = "both"
+    rename_prompt: str = ""
     use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
     custom_schema_prompts: dict = field(default_factory=dict)

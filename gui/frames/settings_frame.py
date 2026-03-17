@@ -9,9 +9,6 @@ from config.defaults import DEFAULT_OCR_PROMPT, DEFAULT_RENAME_PROMPT, SCHEMA_PR
 from config.settings import AppConfig
 from extraction.schemas import get_schema_preset, get_available_schemas
 
-_RENAME_MODE_LABELS = {"md": "Solo MD", "pdf": "Solo PDF", "both": "Entrambi"}
-_RENAME_LABEL_TO_MODE = {v: k for k, v in _RENAME_MODE_LABELS.items()}
-
 
 class SchemaEditorWindow(ctk.CTkToplevel):
     """Window for editing a schema's prompt description."""
@@ -354,62 +351,36 @@ class SettingsWindow(ctk.CTkToplevel):
         self.subfolder_name_entry.pack(padx=10, pady=(0, 5), anchor="w")
         self.subfolder_name_entry.insert(0, self.config.output_subfolder_name)
 
-        # File renaming options
+        # File renaming prompt
         rename_sep = ctk.CTkFrame(tab, height=1, fg_color="gray50")
         rename_sep.pack(padx=10, pady=(10, 5), fill="x")
 
         ctk.CTkLabel(
-            tab, text="Rinomina automatica file",
+            tab, text="Prompt rinomina file",
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(padx=10, pady=(5, 2), anchor="w")
 
         ctk.CTkLabel(
             tab,
-            text="Formato: YYYYMMDD - Descrizione del contenuto.ext\n"
-                 "Data e descrizione vengono ricavati tramite una chiamata LLM\n"
-                 "sul testo OCR del documento.",
+            text="Prompt usato per ricavare data e descrizione dal testo OCR\n"
+                 "quando la rinomina automatica è attiva (formato YYYYMMDD - Descrizione.ext).",
             font=ctk.CTkFont(size=11), text_color="gray60",
             justify="left",
         ).pack(padx=10, pady=(0, 5), anchor="w")
 
-        rename_row = ctk.CTkFrame(tab, fg_color="transparent")
-        rename_row.pack(padx=10, pady=2, anchor="w")
-
-        self.rename_files_var = ctk.BooleanVar(value=self.config.rename_files)
-        self.rename_cb = ctk.CTkCheckBox(
-            rename_row, text="Attiva rinomina",
-            variable=self.rename_files_var,
-            command=self._on_rename_changed,
-        )
-        self.rename_cb.pack(side="left", padx=(0, 10))
-
-        self.rename_mode_var = ctk.StringVar(
-            value=_RENAME_MODE_LABELS.get(self.config.rename_mode, "Entrambi")
-        )
-        self.rename_mode_menu = ctk.CTkOptionMenu(
-            rename_row, values=list(_RENAME_MODE_LABELS.values()),
-            variable=self.rename_mode_var, width=110,
-        )
-        self.rename_mode_menu.pack(side="left")
-
-        # Prompt editor for rename
         rename_prompt_row = ctk.CTkFrame(tab, fg_color="transparent")
-        rename_prompt_row.pack(padx=10, pady=(5, 2), anchor="w")
+        rename_prompt_row.pack(padx=10, pady=(2, 2), anchor="w")
 
-        self.edit_rename_prompt_btn = ctk.CTkButton(
+        ctk.CTkButton(
             rename_prompt_row, text="Modifica Prompt Rinomina",
             command=self._open_rename_prompt_editor, width=190,
-        )
-        self.edit_rename_prompt_btn.pack(side="left", padx=(0, 5))
+        ).pack(side="left", padx=(0, 5))
 
-        self.reset_rename_prompt_btn = ctk.CTkButton(
+        ctk.CTkButton(
             rename_prompt_row, text="Ripristina Default",
             command=self._reset_rename_prompt, width=140,
             fg_color="gray40", hover_color="gray30",
-        )
-        self.reset_rename_prompt_btn.pack(side="left")
-
-        self._on_rename_changed()
+        ).pack(side="left")
 
     def _toggle_key_visibility(self) -> None:
         show = "" if self.show_key_var.get() else "*"
@@ -424,13 +395,6 @@ class SettingsWindow(ctk.CTkToplevel):
         if folder:
             self.output_dir_entry.delete(0, "end")
             self.output_dir_entry.insert(0, folder)
-
-    def _on_rename_changed(self) -> None:
-        """Enable/disable rename controls based on rename checkbox."""
-        state = "normal" if self.rename_files_var.get() else "disabled"
-        self.rename_mode_menu.configure(state=state)
-        self.edit_rename_prompt_btn.configure(state=state)
-        self.reset_rename_prompt_btn.configure(state=state)
 
     def _open_rename_prompt_editor(self) -> None:
         """Open the editor for the rename prompt."""
@@ -464,9 +428,8 @@ class SettingsWindow(ctk.CTkToplevel):
         subfolder_name = self.subfolder_name_entry.get().strip()
         if subfolder_name:
             self.config.output_subfolder_name = subfolder_name
-        self.config.rename_files = self.rename_files_var.get()
-        self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
-        # rename_prompt is already updated live via _on_rename_prompt_saved / _reset_rename_prompt
+        # rename_files and rename_mode are controlled from the main window only.
+        # rename_prompt is already updated live via _on_rename_prompt_saved / _reset_rename_prompt.
 
         self.on_save(self.config)
         self.destroy()

@@ -441,8 +441,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """Grey/ungrey OCR model and schema selectors based on phase checkboxes."""
         ocr_on = self.run_ocr_var.get()
         ext_on = self.run_extraction_var.get()
-        # Model is shared by both phases — disable only when neither is active
-        model_state = "normal" if (ocr_on or ext_on) else "disabled"
+        rename_on = self.rename_files_var.get()
+        # Model is shared by OCR, extraction and rename — disable only when none is active
+        model_state = "normal" if (ocr_on or ext_on or rename_on) else "disabled"
         self.model_menu.configure(state=model_state)
         self.schema_menu.configure(state="normal" if ext_on else "disabled")
 
@@ -450,6 +451,8 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         """Enable/disable rename mode dropdown based on rename checkbox."""
         state = "normal" if self.rename_files_var.get() else "disabled"
         self.rename_mode_menu.configure(state=state)
+        # Rename also uses the model, so refresh model selector state
+        self._on_phases_changed()
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         """Called when settings are saved."""

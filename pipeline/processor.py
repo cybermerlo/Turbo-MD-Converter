@@ -83,7 +83,7 @@ class DocumentProcessor:
     ) -> tuple[bool, dict]:
         """Process one document through the full pipeline.
 
-        PDF files go through OCR; TXT and EML files are read directly.
+        PDF files go through OCR; TXT, EML and MSG files are read directly.
 
         Returns:
             Tuple of (success: bool, cost_info: dict)
@@ -91,13 +91,13 @@ class DocumentProcessor:
         self.cost_tracker.reset()
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
-        # Phase 1: Text acquisition (OCR for PDF, direct read for TXT/EML,
+        # Phase 1: Text acquisition (OCR for PDF, direct read for TXT/EML/MSG,
         #          or sidecar .txt if OCR is disabled for a PDF)
         suffix = pdf_path.suffix.lower()
-        is_pdf = suffix not in (".txt", ".eml")
+        is_pdf = suffix not in (".txt", ".eml", ".msg")
 
         if not is_pdf:
-            # TXT / EML: always read directly, OCR flag is irrelevant
+            # TXT / EML / MSG: always read directly, OCR flag is irrelevant
             try:
                 ocr_result = self._read_text_file(pdf_path)
             except Exception as e:
@@ -476,13 +476,16 @@ class DocumentProcessor:
         self.emit(ExtractionProgressEvent(**kwargs))
 
     def _read_text_file(self, file_path: Path):
-        """Read text content directly from TXT or EML files (no OCR needed)."""
+        """Read text content directly from TXT, EML or MSG files (no OCR needed)."""
         from ocr.ocr_pipeline import OCRResult
 
         suffix = file_path.suffix.lower()
         if suffix == ".eml":
             text = self._extract_eml_text(file_path)
             self.emit(LogEvent(message=f"File EML letto direttamente (OCR non necessario)"))
+        elif suffix == ".msg":
+            text = self._extract_msg_text(file_path)
+            self.emit(LogEvent(message=f"File MSG letto direttamente (OCR non necessario)"))
         else:
             text = file_path.read_text(encoding="utf-8", errors="replace")
             self.emit(LogEvent(message=f"File TXT letto direttamente (OCR non necessario)"))
@@ -521,5 +524,32 @@ class DocumentProcessor:
                         parts.append(body)
                 except Exception:
                     pass
+
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_msg_text(file_path: Path) -> str:
+        """Extract plain-text content from an Outlook MSG file, including key headers."""
+        import extract_msg
+
+        parts = []
+
+        with extract_msg.openMsg(file_path) as msg:
+            header_map = [
+                ("Date", msg.date),
+                ("From", msg.sender),
+                ("To", msg.to),
+                ("Cc", msg.cc),
+                ("Subject", msg.subject),
+            ]
+            for label, value in header_map:
+                if value and str(value).strip():
+                    parts.append(f"{label}: {value}")
+            if parts:
+                parts.append("")
+
+            body = msg.body
+            if body and body.strip():
+                parts.append(body)
 
         return "\n".join(parts)

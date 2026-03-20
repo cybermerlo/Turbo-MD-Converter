@@ -5,7 +5,7 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-SUPPORTED_EXTENSIONS = (".pdf", ".txt", ".eml")
+SUPPORTED_EXTENSIONS = (".pdf", ".txt", ".eml", ".msg")
 
 
 class InputFrame(ctk.CTkFrame):
@@ -23,7 +23,7 @@ class InputFrame(ctk.CTkFrame):
         )
         self.title_label.pack(padx=10, pady=(10, 5), anchor="w")
         ctk.CTkLabel(
-            self, text="Trascina qui i file PDF, TXT o EML o usa i pulsanti sotto",
+            self, text="Trascina qui i file PDF, TXT, EML o MSG o usa i pulsanti sotto",
             font=ctk.CTkFont(size=11),
             text_color="gray",
         ).pack(padx=10, pady=(0, 5), anchor="w")
@@ -61,14 +61,14 @@ class InputFrame(ctk.CTkFrame):
         self.count_label.pack(padx=10, pady=(0, 5), anchor="w")
 
     def _select_files(self) -> None:
-        """Open file dialog to select PDF, TXT or EML files."""
+        """Open file dialog to select PDF, TXT, EML or MSG files."""
         paths = filedialog.askopenfilenames(
             title="Seleziona file",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg"),
                 ("PDF files", "*.pdf"),
                 ("Text files", "*.txt"),
-                ("Email files", "*.eml"),
+                ("Email files", "*.eml *.msg"),
                 ("All files", "*.*"),
             ],
         )

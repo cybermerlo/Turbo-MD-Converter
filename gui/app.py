@@ -36,7 +36,7 @@ from pipeline.worker import PipelineWorker
 class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """Main application window."""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, initial_files: list[Path] | None = None):
         super().__init__()
         self.TkdndVersion = TkinterDnD._require(self)
 
@@ -53,6 +53,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._build_layout()
         self._setup_drag_drop()
         self._start_queue_polling()
+
+        if initial_files:
+            self.after(100, lambda: self.input_frame.add_paths(initial_files))
 
     def _build_layout(self) -> None:
         """Construct the main UI layout."""

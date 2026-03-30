@@ -57,6 +57,70 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if initial_files:
             self.after(100, lambda: self.input_frame.add_paths(initial_files))
 
+        self.after(500, self._check_sendto_shortcut)
+
+    def _check_sendto_shortcut(self) -> None:
+        """Chiede all'utente di aggiungere il collegamento 'Invia a' al primo avvio."""
+        import sys
+        import os
+        import subprocess
+        from tkinter import messagebox
+
+        # Esegui solo se è compilato come EXE (frozen)
+        if not getattr(sys, 'frozen', False):
+            return
+            
+        sendto_dir = Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\SendTo"))
+        shortcut_path = sendto_dir / "OCR+Langextract.lnk"
+
+        # Se il collegamento esiste già, non chiediamo
+        if shortcut_path.exists():
+            if not self.config.asked_sendto:
+                self.config.asked_sendto = True
+                save_config(self.config)
+            return
+
+        # Se abbiamo già chiesto in passato e l'utente ha detto no, non chiediamo di nuovo
+        if self.config.asked_sendto:
+            return
+
+        response = messagebox.askyesno(
+            "Integrazione Windows",
+            "Vuoi aggiungere 'OCR+Langextract' al menu 'Invia a' di Windows?\n\n"
+            "Utile per selezionare file e cartelle, cliccare col tasto destro "
+            "e inviarli direttamente all'applicazione.",
+            parent=self
+        )
+
+        if response:
+            exe_path = Path(sys.executable)
+            vbs_script = f'''
+Set oWS = WScript.CreateObject("WScript.Shell")
+sLinkFile = "{shortcut_path}"
+Set oLink = oWS.CreateShortcut(sLinkFile)
+oLink.TargetPath = "{exe_path}"
+oLink.Description = "Invia a OCR+Langextract"
+oLink.Save
+'''
+            vbs_path = sendto_dir / "temp_create_shortcut.vbs"
+            try:
+                vbs_path.write_text(vbs_script, encoding="utf-8")
+                subprocess.run(["cscript.exe", "//Nologo", str(vbs_path)], creationflags=subprocess.CREATE_NO_WINDOW)
+                self.log_frame.append("Collegamento aggiunto al menu 'Invia a'.")
+                messagebox.showinfo(
+                    "Successo", 
+                    "Il collegamento è stato aggiunto con successo al menu 'Invia a'!",
+                    parent=self
+                )
+            except Exception as e:
+                self.log_frame.append(f"Impossibile creare il collegamento Invia a: {e}", "ERROR")
+            finally:
+                if vbs_path.exists():
+                    vbs_path.unlink()
+
+        self.config.asked_sendto = True
+        save_config(self.config)
+
     def _build_layout(self) -> None:
         """Construct the main UI layout."""
         # Top bar

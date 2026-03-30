@@ -34,6 +34,7 @@ class AppConfig:
     use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
     custom_schema_prompts: dict = field(default_factory=dict)
+    asked_sendto: bool = False
 
 
 def get_config_dir() -> Path:

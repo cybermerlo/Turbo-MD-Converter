@@ -97,12 +97,11 @@ def load_config(config_path: Path | None = None,
 
 
 def save_config(config: AppConfig, config_path: Path | None = None) -> None:
-    """Save config to JSON file. API keys are NOT saved to disk."""
+    """Save config to JSON file, compresa la chiave API."""
     path = config_path or get_config_path()
     data = asdict(config)
-    # Never persist API keys to the config file
-    data.pop("gemini_api_key", None)
-    data.pop("langextract_api_key", None)
+    # L'API key ora viene salvata nel config.json locale in AppData
+    # affinché l'eseguibile ne mantenga la memoria.
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:

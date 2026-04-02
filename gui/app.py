@@ -33,6 +33,17 @@ from pipeline.events import (
 )
 from pipeline.worker import PipelineWorker
 
+_FONT_BOLD = ("", 13, "bold")
+
+
+def _section_label(parent, text: str) -> ctk.CTkLabel:
+    """Small uppercase section header."""
+    return ctk.CTkLabel(
+        parent, text=text.upper(),
+        font=ctk.CTkFont(size=10, weight="bold"),
+        text_color="gray60",
+    )
+
 
 class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """Main application window."""
@@ -41,9 +52,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         super().__init__()
         self.TkdndVersion = TkinterDnD._require(self)
 
-        self.title("OCR + LangExtract - Analisi Documenti Legali")
-        self.geometry("1100x750")
-        self.minsize(900, 600)
+        self.title("OCR + LangExtract")
+        self.geometry("1140x780")
+        self.minsize(960, 620)
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
@@ -60,73 +71,13 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.after(500, self._check_sendto_shortcut)
 
-    def _check_sendto_shortcut(self) -> None:
-        """Chiede all'utente di aggiungere il collegamento 'Invia a' al primo avvio."""
-        import sys
-        import os
-        import subprocess
-        from tkinter import messagebox
-
-        # Esegui solo se è compilato come EXE (frozen)
-        if not getattr(sys, 'frozen', False):
-            return
-            
-        sendto_dir = Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\SendTo"))
-        shortcut_path = sendto_dir / "OCR+Langextract.lnk"
-
-        # Se il collegamento esiste già, non chiediamo
-        if shortcut_path.exists():
-            if not self.config.asked_sendto:
-                self.config.asked_sendto = True
-                save_config(self.config)
-            return
-
-        # Se abbiamo già chiesto in passato e l'utente ha detto no, non chiediamo di nuovo
-        if self.config.asked_sendto:
-            return
-
-        response = messagebox.askyesno(
-            "Integrazione Windows",
-            "Vuoi aggiungere 'OCR+Langextract' al menu 'Invia a' di Windows?\n\n"
-            "Utile per selezionare file e cartelle, cliccare col tasto destro "
-            "e inviarli direttamente all'applicazione.",
-            parent=self
-        )
-
-        if response:
-            exe_path = Path(sys.executable)
-            vbs_script = f'''
-Set oWS = WScript.CreateObject("WScript.Shell")
-sLinkFile = "{shortcut_path}"
-Set oLink = oWS.CreateShortcut(sLinkFile)
-oLink.TargetPath = "{exe_path}"
-oLink.Description = "Invia a OCR+Langextract"
-oLink.Save
-'''
-            vbs_path = sendto_dir / "temp_create_shortcut.vbs"
-            try:
-                vbs_path.write_text(vbs_script, encoding="utf-8")
-                subprocess.run(["cscript.exe", "//Nologo", str(vbs_path)], creationflags=subprocess.CREATE_NO_WINDOW)
-                self.log_frame.append("Collegamento aggiunto al menu 'Invia a'.")
-                messagebox.showinfo(
-                    "Successo", 
-                    "Il collegamento è stato aggiunto con successo al menu 'Invia a'!",
-                    parent=self
-                )
-            except Exception as e:
-                self.log_frame.append(f"Impossibile creare il collegamento Invia a: {e}", "ERROR")
-            finally:
-                if vbs_path.exists():
-                    vbs_path.unlink()
-
-        self.config.asked_sendto = True
-        save_config(self.config)
+    # ─── Layout ──────────────────────────────────────────────────────────────
 
     def _build_layout(self) -> None:
         """Construct the main UI layout."""
-        # Top bar
-        top_bar = ctk.CTkFrame(self, height=50, fg_color="transparent")
-        top_bar.pack(padx=10, pady=(10, 0), fill="x")
+        # ── Top bar ──────────────────────────────────────────────────────────
+        top_bar = ctk.CTkFrame(self, height=52, fg_color="transparent")
+        top_bar.pack(padx=14, pady=(12, 0), fill="x")
         top_bar.pack_propagate(False)
 
         ctk.CTkLabel(
@@ -138,178 +89,176 @@ oLink.Save
         ctk.CTkButton(
             top_bar, text="Impostazioni", width=110,
             command=self._open_settings,
-        ).pack(side="right")
+        ).pack(side="right", pady=8)
 
-        # Main content: two columns
+        # ── Two-column content ────────────────────────────────────────────────
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(padx=10, pady=10, fill="both", expand=True)
-        content.grid_columnconfigure(0, weight=1, minsize=300)
-        content.grid_columnconfigure(1, weight=2, minsize=500)
+        content.pack(padx=14, pady=(8, 12), fill="both", expand=True)
+        content.grid_columnconfigure(0, weight=3, minsize=300)
+        content.grid_columnconfigure(1, weight=5, minsize=520)
         content.grid_rowconfigure(0, weight=1)
 
         # LEFT column
         left = ctk.CTkFrame(content, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
-        left.grid_rowconfigure(0, weight=1)
-        left.grid_rowconfigure(1, weight=0)
-        left.grid_rowconfigure(2, weight=0)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        left.grid_rowconfigure(0, weight=1)   # file list expands
+        left.grid_rowconfigure(1, weight=0)   # options card
+        left.grid_rowconfigure(2, weight=0)   # action buttons
 
         self.input_frame = InputFrame(left, on_files_changed=self._on_files_changed)
-        self.input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 5))
+        self.input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
+        left.grid_columnconfigure(0, weight=1)
 
-        # Output format label (solo Markdown)
-        self.output_frame_options = ctk.CTkFrame(left)
-        self.output_frame_options.grid(row=1, column=0, sticky="ew", pady=5)
+        self._build_options_card(left)
+        self._build_action_buttons(left)
 
-        format_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        format_row.pack(padx=10, pady=5, fill="x")
+        # RIGHT column
+        right = ctk.CTkFrame(content, fg_color="transparent")
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        right.grid_rowconfigure(0, weight=0)
+        right.grid_rowconfigure(1, weight=1)
+        right.grid_rowconfigure(2, weight=0)
+        right.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(format_row, text="Formato:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=(0, 10)
+        self.progress_frame = ProgressFrame(right)
+        self.progress_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+
+        self.output_frame = OutputFrame(right)
+        self.output_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 6))
+
+        self.log_frame = LogFrame(right)
+        self.log_frame.grid(row=2, column=0, sticky="ew")
+
+        # Apply initial greyed states
+        self._on_phases_changed()
+        self._on_rename_changed()
+
+    def _build_options_card(self, parent) -> None:
+        """Build the compact options card below the file list."""
+        card = ctk.CTkFrame(parent)
+        card.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+
+        _section_label(card, "Operazioni").pack(padx=12, pady=(10, 4), anchor="w")
+
+        # ── Modello AI (shared by all features) ──────────────────────────────
+        model_row = ctk.CTkFrame(card, fg_color="transparent")
+        model_row.pack(padx=12, pady=(0, 6), fill="x")
+
+        ctk.CTkLabel(model_row, text="Modello AI:").pack(side="left", padx=(0, 8))
+        self.model_var = ctk.StringVar(
+            value=self.config.ocr_model_id
+            if self.config.ocr_model_id in AVAILABLE_OCR_MODELS
+            else AVAILABLE_OCR_MODELS[0]
         )
-        ctk.CTkLabel(format_row, text="Markdown").pack(side="left")
-
-        # Phase selection checkboxes
-        phases_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        phases_row.pack(padx=10, pady=(0, 5), fill="x")
-
-        ctk.CTkLabel(phases_row, text="Fasi:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=(0, 10)
+        self.model_menu = ctk.CTkOptionMenu(
+            model_row, values=AVAILABLE_OCR_MODELS,
+            variable=self.model_var, width=220,
         )
+        self.model_menu.pack(side="right")
+
+        # ── Divider ───────────────────────────────────────────────────────────
+        ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(0, 6), fill="x")
+
+        # ── OCR ───────────────────────────────────────────────────────────────
+        ocr_row = ctk.CTkFrame(card, fg_color="transparent")
+        ocr_row.pack(padx=12, pady=2, fill="x")
+
         self.run_ocr_var = ctk.BooleanVar(value=self.config.run_ocr)
         self.run_ocr_cb = ctk.CTkCheckBox(
-            phases_row, text="OCR",
+            ocr_row, text="OCR — estrai testo",
             variable=self.run_ocr_var,
             command=self._on_phases_changed,
-            width=70,
         )
-        self.run_ocr_cb.pack(side="left", padx=(0, 10))
+        self.run_ocr_cb.pack(side="left")
+
+        # ── Estrazione strutturata ────────────────────────────────────────────
+        ext_row = ctk.CTkFrame(card, fg_color="transparent")
+        ext_row.pack(padx=12, pady=2, fill="x")
 
         self.run_extraction_var = ctk.BooleanVar(value=self.config.run_extraction)
         self.run_extraction_cb = ctk.CTkCheckBox(
-            phases_row, text="LangExtract",
+            ext_row, text="Estrazione strutturata",
             variable=self.run_extraction_var,
             command=self._on_phases_changed,
-            width=120,
         )
-        self.run_extraction_cb.pack(side="left", padx=(0, 10))
+        self.run_extraction_cb.pack(side="left")
+
+        self.schema_var = ctk.StringVar(value=self.config.active_schema)
+        self.schema_menu = ctk.CTkOptionMenu(
+            ext_row, values=SCHEMA_PRESET_NAMES,
+            variable=self.schema_var, width=140,
+        )
+        self.schema_menu.pack(side="right")
+
+        # ── Rinomina ──────────────────────────────────────────────────────────
+        rename_row = ctk.CTkFrame(card, fg_color="transparent")
+        rename_row.pack(padx=12, pady=2, fill="x")
 
         self.rename_files_var = ctk.BooleanVar(value=self.config.rename_files)
         self.rename_cb = ctk.CTkCheckBox(
-            phases_row, text="Rinomina",
+            rename_row, text="Rinomina file automaticamente",
             variable=self.rename_files_var,
             command=self._on_rename_changed,
-            width=100,
         )
-        self.rename_cb.pack(side="left", padx=(0, 5))
+        self.rename_cb.pack(side="left")
 
         self.rename_mode_var = ctk.StringVar(
             value=_RENAME_MODE_LABELS.get(self.config.rename_mode, "Entrambi")
         )
         self.rename_mode_menu = ctk.CTkOptionMenu(
-            phases_row, values=list(_RENAME_MODE_LABELS.values()),
-            variable=self.rename_mode_var, width=110,
+            rename_row, values=list(_RENAME_MODE_LABELS.values()),
+            variable=self.rename_mode_var, width=100,
         )
-        self.rename_mode_menu.pack(side="left")
+        self.rename_mode_menu.pack(side="right")
 
-        # OCR Model selector
-        model_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        model_row.pack(padx=10, pady=(0, 5), fill="x")
+        # ── Divider ───────────────────────────────────────────────────────────
+        ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(8, 4), fill="x")
 
-        ctk.CTkLabel(model_row, text="Modello OCR:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=(0, 10)
-        )
-        self.model_var = ctk.StringVar(
-            value=self.config.ocr_model_id if self.config.ocr_model_id in AVAILABLE_OCR_MODELS else AVAILABLE_OCR_MODELS[0]
-        )
-        self.model_menu = ctk.CTkOptionMenu(
-            model_row, values=AVAILABLE_OCR_MODELS,
-            variable=self.model_var, width=230,
-        )
-        self.model_menu.pack(side="left")
-
-        # Schema selector
-        schema_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        schema_row.pack(padx=10, pady=(0, 5), fill="x")
-
-        ctk.CTkLabel(schema_row, text="Schema di estrazione:", font=ctk.CTkFont(weight="bold")).pack(
-            side="left", padx=(0, 10)
-        )
-        self.schema_var = ctk.StringVar(value=self.config.active_schema)
-        self.schema_menu = ctk.CTkOptionMenu(
-            schema_row, values=SCHEMA_PRESET_NAMES,
-            variable=self.schema_var, width=230,
-        )
-        self.schema_menu.pack(side="left")
-
-        # Apply initial greying state
-        self._on_phases_changed()
-        self._on_rename_changed()
-
-        # Subfolder output checkbox
-        subfolder_row = ctk.CTkFrame(self.output_frame_options, fg_color="transparent")
-        subfolder_row.pack(padx=10, pady=(0, 5), fill="x")
-
+        # ── Sottocartella ─────────────────────────────────────────────────────
         self.use_subfolder_var = ctk.BooleanVar(value=self.config.use_output_subfolder)
         self.subfolder_checkbox = ctk.CTkCheckBox(
-            subfolder_row,
-            text=f"Salva MD in sottocartella \"{self.config.output_subfolder_name}\"",
+            card,
+            text=f'Salva in sottocartella "{self.config.output_subfolder_name}"',
             variable=self.use_subfolder_var,
             command=self._on_subfolder_changed,
         )
-        self.subfolder_checkbox.pack(side="left")
+        self.subfolder_checkbox.pack(padx=12, pady=(4, 12), anchor="w")
 
-        # Action buttons
-        btn_frame = ctk.CTkFrame(left)
-        btn_frame.grid(row=2, column=0, sticky="ew", pady=(5, 0))
+    def _build_action_buttons(self, parent) -> None:
+        """Build start/cancel buttons."""
+        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_frame.grid(row=2, column=0, sticky="ew")
 
         self.start_btn = ctk.CTkButton(
-            btn_frame, text="Avvia Elaborazione",
+            btn_frame,
+            text="Elabora documenti",
             command=self._start_processing,
             font=ctk.CTkFont(size=14, weight="bold"),
-            height=40,
+            height=42,
             state="disabled",
         )
-        self.start_btn.pack(padx=10, pady=10, fill="x")
+        self.start_btn.pack(fill="x", pady=(0, 4))
 
         self.cancel_btn = ctk.CTkButton(
-            btn_frame, text="Annulla",
+            btn_frame,
+            text="Interrompi",
             command=self._cancel_processing,
-            fg_color="firebrick", hover_color="darkred",
+            fg_color="firebrick",
+            hover_color="darkred",
+            height=34,
             state="disabled",
         )
-        self.cancel_btn.pack(padx=10, pady=(0, 10), fill="x")
+        self.cancel_btn.pack(fill="x")
 
-        # RIGHT column
-        right = ctk.CTkFrame(content, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
-        right.grid_rowconfigure(0, weight=0)
-        right.grid_rowconfigure(1, weight=1)
-        right.grid_rowconfigure(2, weight=0)
-
-        self.progress_frame = ProgressFrame(right)
-        self.progress_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
-
-        self.output_frame = OutputFrame(right)
-        self.output_frame.grid(row=1, column=0, sticky="nsew", pady=5)
-
-        self.log_frame = LogFrame(right)
-        self.log_frame.grid(row=2, column=0, sticky="ew", pady=(5, 0))
-
-        right.grid_columnconfigure(0, weight=1)
+    # ─── Drag & drop ─────────────────────────────────────────────────────────
 
     def _setup_drag_drop(self) -> None:
-        """Register the PDF input area as drag & drop target for files."""
         self.input_frame.drop_target_register(DND_FILES)
         self.input_frame.dnd_bind("<<Drop>>", self._on_drop_files)
 
     def _on_drop_files(self, event) -> None:
-        """Handle files dropped on the input frame (only PDFs are added)."""
         if not event.data:
             return
-        # tk.splitlist() handles Tcl list format natively: it correctly parses
-        # both plain paths and {brace-quoted paths with spaces}.
-        # Do NOT strip braces before calling it — that breaks multi-file drops.
         try:
             paths = self.tk.splitlist(event.data)
         except Exception:
@@ -320,7 +269,6 @@ oLink.Save
             p = p.strip()
             if not p:
                 continue
-            # Handle file:// URIs emitted by some Linux DnD managers
             if p.startswith("file://"):
                 import urllib.parse
                 import urllib.request
@@ -330,8 +278,9 @@ oLink.Save
         self.input_frame.add_paths(path_objs)
         return event.action
 
+    # ─── Event queue ─────────────────────────────────────────────────────────
+
     def _start_queue_polling(self) -> None:
-        """Poll the event queue every 100ms."""
         try:
             while True:
                 event = self.gui_queue.get_nowait()
@@ -341,12 +290,11 @@ oLink.Save
         self.after(100, self._start_queue_polling)
 
     def _handle_event(self, event: PipelineEvent) -> None:
-        """Route events to appropriate frame updates."""
+        """Route pipeline events to the appropriate UI components."""
         if isinstance(event, OCRProgressEvent):
             self.progress_frame.update_ocr(
                 event.page_num, event.total_pages, event.success,
             )
-            # Update cost
             total_tokens = event.input_tokens + event.output_tokens
             self.progress_frame.update_cost(total_tokens, event.page_cost)
 
@@ -367,27 +315,24 @@ oLink.Save
 
         elif isinstance(event, PageNativeTextEvent):
             self.log_frame.append(
-                f"Pagina {event.page_num + 1}/{event.total_pages}: "
-                f"testo nativo ({event.char_count:,} car.) - OCR saltato",
+                f"Pag. {event.page_num + 1}/{event.total_pages}: "
+                f"testo nativo ({event.char_count:,} car.) — OCR saltato",
                 "INFO",
             )
 
         elif isinstance(event, PageSkippedEvent):
             msg = (
-                f"⚠️  PAGINA {event.page_num + 1}/{event.total_pages} SALTATA\n"
+                f"Pagina {event.page_num + 1}/{event.total_pages} senza testo\n"
                 f"Motivo: {event.reason}"
             )
             self.log_frame.append(msg, "WARNING")
-            # Show a popup warning (non-blocking)
             self.after(0, lambda m=msg: tk.messagebox.showwarning(
-                title="Pagina saltata",
-                message=m,
+                title="Pagina senza testo", message=m,
             ))
 
         elif isinstance(event, OutputWrittenEvent):
             if event.file_paths:
                 self.output_frame.set_output_dir(event.file_paths[0].parent)
-                # Load and display the files
                 for fp in event.file_paths:
                     try:
                         content = fp.read_text(encoding="utf-8")
@@ -410,8 +355,8 @@ oLink.Save
 
         elif isinstance(event, FileRenamedEvent):
             self.log_frame.append(
-                f"File {event.file_type.upper()} rinominato: "
-                f"{event.original_path.name} -> {event.new_path.name}"
+                f"Rinominato ({event.file_type.upper()}): "
+                f"{event.original_path.name} → {event.new_path.name}"
             )
 
         elif isinstance(event, ErrorEvent):
@@ -420,13 +365,13 @@ oLink.Save
         elif isinstance(event, LogEvent):
             self.log_frame.append(event.message, event.level)
 
+    # ─── Processing ──────────────────────────────────────────────────────────
+
     def _on_files_changed(self, paths: list[Path]) -> None:
-        """Called when the file selection changes."""
         has_files = len(paths) > 0
         self.start_btn.configure(state="normal" if has_files else "disabled")
 
     def _start_processing(self) -> None:
-        """Start the pipeline worker."""
         pdf_paths = self.input_frame.get_file_paths()
         if not pdf_paths:
             return
@@ -434,23 +379,21 @@ oLink.Save
         run_ocr = self.run_ocr_var.get()
         run_extraction = self.run_extraction_var.get()
 
-        # At least one phase must be selected
         if not run_ocr and not run_extraction:
             self.log_frame.append(
-                "Selezionare almeno una fase (OCR o LangExtract).", "ERROR"
+                "Seleziona almeno un'operazione (OCR o Estrazione strutturata).", "ERROR"
             )
             return
 
-        # Gemini API key is required for PDF OCR or structured extraction.
         has_pdf = any(p.suffix.lower() == ".pdf" for p in pdf_paths)
         needs_api_key = (has_pdf and run_ocr) or run_extraction
         if not self.config.gemini_api_key and needs_api_key:
             self.log_frame.append(
-                "Chiave API Gemini non configurata. Apri Impostazioni.", "ERROR"
+                "Chiave API Gemini non configurata. Aprire le Impostazioni.", "ERROR"
             )
             return
 
-        # Update config from UI
+        # Sync config from UI
         self.config.run_ocr = run_ocr
         self.config.run_extraction = run_extraction
         self.config.ocr_model_id = self.model_var.get()
@@ -459,8 +402,6 @@ oLink.Save
         self.config.rename_files = self.rename_files_var.get()
         self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
         self.config.use_output_subfolder = self.use_subfolder_var.get()
-
-        # Output format is always markdown
         self.config.output_formats = ["markdown"]
 
         # Reset UI
@@ -468,69 +409,50 @@ oLink.Save
         self.output_frame.clear()
         self.log_frame.clear()
 
-        # Disable controls
         self.input_frame.set_enabled(False)
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
 
-        # Start worker
         self.worker = PipelineWorker(self.config, self.gui_queue)
         self.worker.start(pdf_paths)
 
+        n = len(pdf_paths)
+        doc_word = "documento" if n == 1 else "documenti"
         phases = []
         if run_ocr:
             phases.append(f"OCR [{self.config.ocr_model_id}]")
         if run_extraction:
-            phases.append(f"LangExtract [schema: {self.config.active_schema}]")
+            phases.append(f"estrazione [{self.config.active_schema}]")
         self.log_frame.append(
-            f"Avviata elaborazione di {len(pdf_paths)} documenti "
-            f"(fasi: {' + '.join(phases)})"
+            f"Avvio elaborazione di {n} {doc_word} — {' + '.join(phases)}"
         )
 
     def _cancel_processing(self) -> None:
-        """Cancel the running pipeline."""
         if self.worker:
             self.worker.cancel()
-            self.log_frame.append("Annullamento in corso...", "WARNING")
+            self.log_frame.append("Interruzione in corso…", "WARNING")
 
     def _on_batch_complete(self, event: BatchCompleteEvent) -> None:
-        """Handle batch completion."""
         self.input_frame.set_enabled(True)
         self.start_btn.configure(state="normal")
         self.cancel_btn.configure(state="disabled")
 
-        self.log_frame.append(
-            f"Batch completato: {event.successful}/{event.total_pdfs} riusciti, "
-            f"{event.failed} falliti"
-        )
+        ok = event.successful
+        fail = event.failed
+        total = event.total_pdfs
+        if fail == 0:
+            self.log_frame.append(f"Completato — {ok}/{total} documenti elaborati con successo.")
+        else:
+            self.log_frame.append(
+                f"Completato — {ok} riusciti, {fail} errori su {total} documenti.", "WARNING"
+            )
+
+    # ─── Settings ────────────────────────────────────────────────────────────
 
     def _open_settings(self) -> None:
-        """Open the settings dialog."""
         SettingsWindow(self, self.config, self._on_settings_saved)
 
-    def _on_subfolder_changed(self) -> None:
-        """Called when the subfolder checkbox changes."""
-        self.config.use_output_subfolder = self.use_subfolder_var.get()
-
-    def _on_phases_changed(self) -> None:
-        """Grey/ungrey OCR model and schema selectors based on phase checkboxes."""
-        ocr_on = self.run_ocr_var.get()
-        ext_on = self.run_extraction_var.get()
-        rename_on = self.rename_files_var.get()
-        # Model is shared by OCR, extraction and rename — disable only when none is active
-        model_state = "normal" if (ocr_on or ext_on or rename_on) else "disabled"
-        self.model_menu.configure(state=model_state)
-        self.schema_menu.configure(state="normal" if ext_on else "disabled")
-
-    def _on_rename_changed(self) -> None:
-        """Enable/disable rename mode dropdown based on rename checkbox."""
-        state = "normal" if self.rename_files_var.get() else "disabled"
-        self.rename_mode_menu.configure(state=state)
-        # Rename also uses the model, so refresh model selector state
-        self._on_phases_changed()
-
     def _on_settings_saved(self, config: AppConfig) -> None:
-        """Called when settings are saved."""
         self.config = config
         self.run_ocr_var.set(config.run_ocr)
         self.run_extraction_var.set(config.run_extraction)
@@ -538,11 +460,96 @@ oLink.Save
         self.schema_var.set(config.active_schema)
         self.rename_files_var.set(config.rename_files)
         self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
-        self._on_rename_changed()
         self.use_subfolder_var.set(config.use_output_subfolder)
-        self._on_phases_changed()
         self.subfolder_checkbox.configure(
-            text=f"Salva MD in sottocartella \"{config.output_subfolder_name}\""
+            text=f'Salva in sottocartella "{config.output_subfolder_name}"'
         )
+        self._on_rename_changed()
+        self._on_phases_changed()
         save_config(config)
-        self.log_frame.append("Impostazioni salvate")
+        self.log_frame.append("Impostazioni salvate.")
+
+    # ─── UI state helpers ────────────────────────────────────────────────────
+
+    def _on_phases_changed(self) -> None:
+        """Enable/disable model and schema dropdowns based on active features."""
+        ocr_on = self.run_ocr_var.get()
+        ext_on = self.run_extraction_var.get()
+        rename_on = self.rename_files_var.get()
+        model_state = "normal" if (ocr_on or ext_on or rename_on) else "disabled"
+        self.model_menu.configure(state=model_state)
+        self.schema_menu.configure(state="normal" if ext_on else "disabled")
+
+    def _on_rename_changed(self) -> None:
+        """Enable/disable rename mode dropdown."""
+        state = "normal" if self.rename_files_var.get() else "disabled"
+        self.rename_mode_menu.configure(state=state)
+        self._on_phases_changed()
+
+    def _on_subfolder_changed(self) -> None:
+        self.config.use_output_subfolder = self.use_subfolder_var.get()
+
+    # ─── SendTo shortcut ─────────────────────────────────────────────────────
+
+    def _check_sendto_shortcut(self) -> None:
+        import sys
+        import os
+        import subprocess
+        from tkinter import messagebox
+
+        if not getattr(sys, "frozen", False):
+            return
+
+        sendto_dir = Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\SendTo"))
+        shortcut_path = sendto_dir / "OCR+Langextract.lnk"
+
+        if shortcut_path.exists():
+            if not self.config.asked_sendto:
+                self.config.asked_sendto = True
+                save_config(self.config)
+            return
+
+        if self.config.asked_sendto:
+            return
+
+        response = messagebox.askyesno(
+            "Integrazione Windows",
+            "Aggiungere 'OCR+Langextract' al menu 'Invia a' di Windows?\n\n"
+            "Permette di selezionare file o cartelle, fare clic destro\n"
+            "e inviarli direttamente a questa applicazione.",
+            parent=self,
+        )
+
+        if response:
+            exe_path = Path(sys.executable)
+            vbs_script = f'''
+Set oWS = WScript.CreateObject("WScript.Shell")
+sLinkFile = "{shortcut_path}"
+Set oLink = oWS.CreateShortcut(sLinkFile)
+oLink.TargetPath = "{exe_path}"
+oLink.Description = "Invia a OCR+Langextract"
+oLink.Save
+'''
+            vbs_path = sendto_dir / "temp_create_shortcut.vbs"
+            try:
+                vbs_path.write_text(vbs_script, encoding="utf-8")
+                subprocess.run(
+                    ["cscript.exe", "//Nologo", str(vbs_path)],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                self.log_frame.append("Collegamento aggiunto al menu 'Invia a'.")
+                messagebox.showinfo(
+                    "Successo",
+                    "Collegamento aggiunto con successo al menu 'Invia a'.",
+                    parent=self,
+                )
+            except Exception as e:
+                self.log_frame.append(
+                    f"Impossibile creare il collegamento: {e}", "ERROR"
+                )
+            finally:
+                if vbs_path.exists():
+                    vbs_path.unlink()
+
+        self.config.asked_sendto = True
+        save_config(self.config)

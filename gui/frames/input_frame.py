@@ -7,6 +7,13 @@ import customtkinter as ctk
 
 SUPPORTED_EXTENSIONS = (".pdf", ".txt", ".eml", ".msg")
 
+_EXT_ICON = {
+    ".pdf": "PDF",
+    ".txt": "TXT",
+    ".eml": "EML",
+    ".msg": "MSG",
+}
+
 
 class InputFrame(ctk.CTkFrame):
     """File selection panel with list of selected documents."""
@@ -16,60 +23,72 @@ class InputFrame(ctk.CTkFrame):
         self.on_files_changed = on_files_changed
         self._file_paths: list[Path] = []
 
-        # Title
-        self.title_label = ctk.CTkLabel(
-            self, text="Documenti",
-            font=ctk.CTkFont(size=14, weight="bold"),
-        )
-        self.title_label.pack(padx=10, pady=(10, 5), anchor="w")
+        # ── Header ───────────────────────────────────────────────────────────
         ctk.CTkLabel(
-            self, text="Trascina qui i file PDF, TXT, EML o MSG o usa i pulsanti sotto",
-            font=ctk.CTkFont(size=11),
-            text_color="gray",
-        ).pack(padx=10, pady=(0, 5), anchor="w")
+            self,
+            text="DOCUMENTI",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="gray60",
+        ).pack(padx=12, pady=(10, 2), anchor="w")
 
-        # Buttons frame
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(padx=10, pady=5, fill="x")
+        ctk.CTkLabel(
+            self,
+            text="Trascina qui i file, oppure usa i pulsanti",
+            font=ctk.CTkFont(size=11),
+            text_color="gray50",
+        ).pack(padx=12, pady=(0, 6), anchor="w")
+
+        # ── Buttons ──────────────────────────────────────────────────────────
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(padx=12, pady=(0, 6), fill="x")
 
         self.add_files_btn = ctk.CTkButton(
-            btn_frame, text="Aggiungi File",
-            command=self._select_files, width=120,
+            btn_row, text="Aggiungi file",
+            command=self._select_files, width=110,
         )
         self.add_files_btn.pack(side="left", padx=(0, 5))
 
         self.add_folder_btn = ctk.CTkButton(
-            btn_frame, text="Aggiungi Cartella",
-            command=self._select_folder, width=130,
+            btn_row, text="Cartella…",
+            command=self._select_folder, width=90,
         )
         self.add_folder_btn.pack(side="left", padx=(0, 5))
 
         self.clear_btn = ctk.CTkButton(
-            btn_frame, text="Pulisci",
-            command=self._clear_files, width=80,
-            fg_color="gray40", hover_color="gray30",
+            btn_row, text="Svuota",
+            command=self._clear_files, width=70,
+            fg_color="transparent",
+            border_width=1,
         )
         self.clear_btn.pack(side="right")
 
-        # File list
-        self.file_list = ctk.CTkTextbox(self, height=120, font=ctk.CTkFont(size=12))
-        self.file_list.pack(padx=10, pady=5, fill="both", expand=True)
+        # ── File list ─────────────────────────────────────────────────────────
+        self.file_list = ctk.CTkTextbox(
+            self,
+            font=ctk.CTkFont(family="Consolas", size=11),
+        )
+        self.file_list.pack(padx=12, pady=(0, 4), fill="both", expand=True)
         self.file_list.configure(state="disabled")
 
-        # Count label
-        self.count_label = ctk.CTkLabel(self, text="0 file selezionati")
-        self.count_label.pack(padx=10, pady=(0, 5), anchor="w")
+        # ── Count ─────────────────────────────────────────────────────────────
+        self.count_label = ctk.CTkLabel(
+            self, text="Nessun documento selezionato",
+            font=ctk.CTkFont(size=11),
+            text_color="gray50",
+        )
+        self.count_label.pack(padx=12, pady=(0, 8), anchor="w")
+
+    # ─── File selection ───────────────────────────────────────────────────────
 
     def _select_files(self) -> None:
-        """Open file dialog to select PDF, TXT, EML or MSG files."""
         paths = filedialog.askopenfilenames(
-            title="Seleziona file",
+            title="Seleziona documenti",
             filetypes=[
                 ("Documenti supportati", "*.pdf *.txt *.eml *.msg"),
-                ("PDF files", "*.pdf"),
-                ("Text files", "*.txt"),
-                ("Email files", "*.eml *.msg"),
-                ("All files", "*.*"),
+                ("PDF", "*.pdf"),
+                ("Testo", "*.txt"),
+                ("Email", "*.eml *.msg"),
+                ("Tutti i file", "*.*"),
             ],
         )
         if paths:
@@ -80,7 +99,6 @@ class InputFrame(ctk.CTkFrame):
             self._refresh_list()
 
     def _select_folder(self) -> None:
-        """Open folder dialog and add all supported files in it."""
         folder = filedialog.askdirectory(title="Seleziona cartella")
         if folder:
             folder_path = Path(folder)
@@ -93,30 +111,35 @@ class InputFrame(ctk.CTkFrame):
             self._refresh_list()
 
     def _clear_files(self) -> None:
-        """Remove all selected files."""
         self._file_paths.clear()
         self._refresh_list()
 
     def _refresh_list(self) -> None:
-        """Update the displayed file list."""
         self.file_list.configure(state="normal")
         self.file_list.delete("1.0", "end")
         for i, path in enumerate(self._file_paths):
-            self.file_list.insert("end", f"{i + 1}. {path.name}\n")
+            tag = _EXT_ICON.get(path.suffix.lower(), "???")
+            self.file_list.insert("end", f"[{tag}]  {path.name}\n")
         self.file_list.configure(state="disabled")
 
-        self.count_label.configure(text=f"{len(self._file_paths)} file selezionati")
+        n = len(self._file_paths)
+        if n == 0:
+            self.count_label.configure(text="Nessun documento selezionato")
+        elif n == 1:
+            self.count_label.configure(text="1 documento selezionato")
+        else:
+            self.count_label.configure(text=f"{n} documenti selezionati")
 
         if self.on_files_changed:
             self.on_files_changed(self._file_paths)
 
+    # ─── Public API ──────────────────────────────────────────────────────────
+
     def get_file_paths(self) -> list[Path]:
-        """Return currently selected file paths."""
         return list(self._file_paths)
 
-    # Keep backward-compatible alias
     def get_pdf_paths(self) -> list[Path]:
-        """Alias for get_file_paths() for backward compatibility."""
+        """Alias for backward compatibility."""
         return self.get_file_paths()
 
     def add_paths(self, paths: list[Path]) -> None:
@@ -130,7 +153,6 @@ class InputFrame(ctk.CTkFrame):
         self._refresh_list()
 
     def set_enabled(self, enabled: bool) -> None:
-        """Enable/disable file selection buttons."""
         state = "normal" if enabled else "disabled"
         self.add_files_btn.configure(state=state)
         self.add_folder_btn.configure(state=state)

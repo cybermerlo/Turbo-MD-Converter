@@ -214,15 +214,43 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # ── Divider ───────────────────────────────────────────────────────────
         ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(8, 4), fill="x")
 
-        # ── Sottocartella ─────────────────────────────────────────────────────
-        self.use_subfolder_var = ctk.BooleanVar(value=self.config.use_output_subfolder)
-        self.subfolder_checkbox = ctk.CTkCheckBox(
-            card,
-            text=f'Salva in sottocartella "{self.config.output_subfolder_name}"',
-            variable=self.use_subfolder_var,
-            command=self._on_subfolder_changed,
+        # ── Output mode ───────────────────────────────────────────────────────
+        _section_label(card, "Destinazione output").pack(padx=12, pady=(4, 2), anchor="w")
+
+        self.output_mode_var = ctk.StringVar(value=self.config.output_mode)
+
+        modes = [
+            ("accanto",       "Accanto al file originale"),
+            ("sottocartella", f'Sottocartella "{self.config.output_subfolder_name}"'),
+            ("cartella",      "Cartella specifica…"),
+        ]
+        for value, label in modes:
+            ctk.CTkRadioButton(
+                card, text=label,
+                variable=self.output_mode_var, value=value,
+                command=self._on_output_mode_changed,
+            ).pack(padx=20, pady=1, anchor="w")
+
+        # Row shown only in "cartella" mode
+        self._cartella_row = ctk.CTkFrame(card, fg_color="transparent")
+        self._cartella_row.pack(padx=12, pady=(2, 0), fill="x")
+
+        self._cartella_label = ctk.CTkLabel(
+            self._cartella_row,
+            text=self._short_dir_label(self.config.output_directory),
+            font=ctk.CTkFont(size=11),
+            text_color="gray50",
         )
-        self.subfolder_checkbox.pack(padx=12, pady=(4, 12), anchor="w")
+        self._cartella_label.pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(
+            self._cartella_row, text="Scegli…", width=70,
+            command=self._pick_output_folder,
+        ).pack(side="right")
+
+        ctk.CTkFrame(card, height=6, fg_color="transparent").pack()
+
+        self._on_output_mode_changed()
 
     def _build_action_buttons(self, parent) -> None:
         """Build start/cancel buttons."""
@@ -385,8 +413,11 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             )
             return
 
-        has_pdf = any(p.suffix.lower() == ".pdf" for p in pdf_paths)
-        needs_api_key = (has_pdf and run_ocr) or run_extraction
+        from pipeline.processor import IMAGE_EXTENSIONS
+        needs_ocr = any(
+            p.suffix.lower() in (".pdf",) + IMAGE_EXTENSIONS for p in pdf_paths
+        )
+        needs_api_key = (needs_ocr and run_ocr) or run_extraction
         if not self.config.gemini_api_key and needs_api_key:
             self.log_frame.append(
                 "Chiave API Gemini non configurata. Aprire le Impostazioni.", "ERROR"
@@ -401,7 +432,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.active_schema = self.schema_var.get()
         self.config.rename_files = self.rename_files_var.get()
         self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
-        self.config.use_output_subfolder = self.use_subfolder_var.get()
+        self.config.output_mode = self.output_mode_var.get()
         self.config.output_formats = ["markdown"]
 
         # Reset UI
@@ -460,10 +491,9 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.schema_var.set(config.active_schema)
         self.rename_files_var.set(config.rename_files)
         self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
-        self.use_subfolder_var.set(config.use_output_subfolder)
-        self.subfolder_checkbox.configure(
-            text=f'Salva in sottocartella "{config.output_subfolder_name}"'
-        )
+        self.output_mode_var.set(config.output_mode)
+        self._cartella_label.configure(text=self._short_dir_label(config.output_directory))
+        self._on_output_mode_changed()
         self._on_rename_changed()
         self._on_phases_changed()
         save_config(config)
@@ -486,8 +516,27 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.rename_mode_menu.configure(state=state)
         self._on_phases_changed()
 
-    def _on_subfolder_changed(self) -> None:
-        self.config.use_output_subfolder = self.use_subfolder_var.get()
+    def _on_output_mode_changed(self) -> None:
+        """Show/hide the folder-picker row based on the selected output mode."""
+        mode = self.output_mode_var.get()
+        if mode == "cartella":
+            self._cartella_row.pack(padx=12, pady=(2, 0), fill="x")
+        else:
+            self._cartella_row.pack_forget()
+
+    def _pick_output_folder(self) -> None:
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(title="Seleziona cartella di output")
+        if folder:
+            self.config.output_directory = folder
+            self._cartella_label.configure(text=self._short_dir_label(folder))
+
+    @staticmethod
+    def _short_dir_label(path: str, maxlen: int = 40) -> str:
+        if not path:
+            return "Nessuna cartella selezionata"
+        p = path.replace("\\", "/")
+        return f"…{p[-(maxlen-1):]}" if len(p) > maxlen else p
 
     # ─── SendTo shortcut ─────────────────────────────────────────────────────
 

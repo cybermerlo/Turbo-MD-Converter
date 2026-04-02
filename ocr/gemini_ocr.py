@@ -24,7 +24,8 @@ class GeminiOCR:
         self.model_id = model_id
         self.ocr_prompt = ocr_prompt
 
-    def ocr_page(self, image_bytes: bytes, page_num: int = 0) -> dict:
+    def ocr_page(self, image_bytes: bytes, page_num: int = 0,
+                 mime_type: str = "image/jpeg") -> dict:
         """Send one page image to Gemini, return extracted text and token usage.
 
         Args:
@@ -58,7 +59,7 @@ class GeminiOCR:
                 model=self.model_id,
                 contents=[
                     types.Part.from_text(text=self.ocr_prompt),
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 ],
                 config=config,
             )

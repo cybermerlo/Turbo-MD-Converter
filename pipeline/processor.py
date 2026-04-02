@@ -37,6 +37,8 @@ from utils.file_renamer import (
 
 logger = logging.getLogger(__name__)
 
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif")
+
 
 class DocumentProcessor:
     """Runs the full pipeline: PDF -> OCR -> Extract -> Output."""
@@ -63,15 +65,10 @@ class DocumentProcessor:
         self.md_formatter = MarkdownFormatter()
         self.json_formatter = JSONFormatter()
 
-        # Build the fixed output directory (if configured via settings).
-        # When use_output_subfolder is True AND an output_directory is set,
-        # we append the subfolder name once here.  When output_directory is
-        # empty the subfolder is computed per-PDF in process_single().
-        if config.output_directory:
-            base_dir = Path(config.output_directory)
-            if config.use_output_subfolder:
-                base_dir = base_dir / config.output_subfolder_name
-            self._fixed_output_dir: Path | None = base_dir
+        # Build the fixed output directory for "cartella" mode.
+        # "accanto" and "sottocartella" are resolved per-file in process_single().
+        if config.output_mode == "cartella" and config.output_directory:
+            self._fixed_output_dir: Path | None = Path(config.output_directory)
         else:
             self._fixed_output_dir = None
 
@@ -92,12 +89,32 @@ class DocumentProcessor:
         self.cost_tracker.reset()
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
-        # Phase 1: Text acquisition (OCR for PDF, direct read for TXT/EML/MSG,
+        # Phase 1: Text acquisition (OCR for PDF/image, direct read for TXT/EML/MSG,
         #          or sidecar .txt if OCR is disabled for a PDF)
         suffix = pdf_path.suffix.lower()
-        is_pdf = suffix not in (".txt", ".eml", ".msg")
+        is_image = suffix in IMAGE_EXTENSIONS
+        is_pdf = suffix not in (".txt", ".eml", ".msg") and not is_image
 
-        if not is_pdf:
+        if is_image:
+            try:
+                ocr_result = self.ocr_pipeline.ocr_single_image(
+                    image_path=pdf_path,
+                    on_page_complete=self._on_ocr_page,
+                    cancel_event=cancel_event,
+                )
+            except Exception as e:
+                self.emit(ErrorEvent(
+                    error_message=f"Errore OCR immagine: {e}",
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
+
+        elif not is_pdf:
             # TXT / EML / MSG: always read directly, OCR flag is irrelevant
             try:
                 ocr_result = self._read_text_file(pdf_path)
@@ -176,7 +193,7 @@ class DocumentProcessor:
 
         # Log text acquisition summary
         ocr_chars = len(ocr_result.combined_text)
-        if is_pdf and self.config.run_ocr:
+        if (is_pdf or is_image) and self.config.run_ocr:
             native = ocr_result.native_text_pages
             ocr_pages = ocr_result.successful_pages - native
             summary = (
@@ -283,13 +300,14 @@ class DocumentProcessor:
                 cost_info=None,
             )
 
-        # When use_output_subfolder is True and no fixed output directory is
-        # configured, create the subfolder next to the source PDF.
-        if self.config.use_output_subfolder and self._fixed_output_dir is None:
-            per_pdf_dir = pdf_path.parent / self.config.output_subfolder_name
-            per_pdf_dir.mkdir(parents=True, exist_ok=True)
-            writer = OutputWriter(per_pdf_dir)
+        # Resolve per-file output directory based on output_mode.
+        if self.config.output_mode == "sottocartella":
+            per_file_dir = pdf_path.parent / self.config.output_subfolder_name
+            per_file_dir.mkdir(parents=True, exist_ok=True)
+            writer = OutputWriter(per_file_dir)
         else:
+            # "accanto": OutputWriter(None) writes next to source file
+            # "cartella": self.writer already points to the fixed dir
             writer = self.writer
 
         try:

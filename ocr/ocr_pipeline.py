@@ -10,6 +10,18 @@ from config.defaults import PAGE_SEPARATOR
 from config.settings import AppConfig
 from ocr.gemini_ocr import GeminiOCR, GeminiOCRError
 from ocr.page_analyzer import PageAnalyzer, PageType
+
+# Supported image MIME types by extension
+IMAGE_MIME_TYPES: dict[str, str] = {
+    ".jpg":  "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png":  "image/png",
+    ".webp": "image/webp",
+    ".tiff": "image/tiff",
+    ".tif":  "image/tiff",
+    ".bmp":  "image/bmp",
+    ".gif":  "image/gif",
+}
 from ocr.pdf_converter import PDFConverter
 from utils.cost_tracker import CostTracker
 from utils.retry import retry_with_backoff
@@ -175,11 +187,61 @@ class OCRPipeline:
         )
         return result
 
-    def _process_single_page(self, page_num: int, image_bytes: bytes) -> OCRPageResult:
+    def ocr_single_image(
+        self,
+        image_path: Path,
+        on_page_complete: Callable[[int, int, bool], None] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> OCRResult:
+        """OCR a single image file (JPG, PNG, WEBP, TIFF, …) as one page.
+
+        Args:
+            image_path: Path to the image file.
+            on_page_complete: Callback(page_num, total_pages, success).
+            cancel_event: Threading event to signal cancellation.
+
+        Returns:
+            OCRResult with one page result.
+        """
+        mime_type = IMAGE_MIME_TYPES.get(image_path.suffix.lower(), "image/jpeg")
+        logger.info(
+            "OCR immagine '%s' (mime=%s, modello=%s)",
+            image_path.name, mime_type, self.model_id,
+        )
+        result = OCRResult(pdf_path=image_path, total_pages=1)
+
+        if cancel_event and cancel_event.is_set():
+            return result
+
+        image_bytes = image_path.read_bytes()
+        page_result = self._process_single_page(0, image_bytes, mime_type=mime_type)
+        result.page_results.append(page_result)
+
+        if page_result.success:
+            result.successful_pages = 1
+            result.combined_text = page_result.text
+            logger.info(
+                "Immagine OCR completata: %d caratteri, %d+%d token",
+                len(page_result.text),
+                page_result.input_tokens, page_result.output_tokens,
+            )
+        else:
+            logger.error("OCR immagine fallito: %s", page_result.error)
+            result.combined_text = f"[OCR non riuscito: {page_result.error}]"
+
+        if on_page_complete:
+            on_page_complete(0, 1, page_result.success)
+
+        return result
+
+    def _process_single_page(
+        self, page_num: int, image_bytes: bytes,
+        mime_type: str = "image/jpeg",
+    ) -> OCRPageResult:
         """Process a single page with retry logic."""
 
         def do_ocr():
-            return self.ocr.ocr_page(image_bytes, page_num)
+            return self.ocr.ocr_page(image_bytes, page_num, mime_type=mime_type)
 
         def on_retry(attempt: int, exc: Exception):
             logger.warning(

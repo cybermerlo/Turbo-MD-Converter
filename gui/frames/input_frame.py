@@ -5,13 +5,24 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-SUPPORTED_EXTENSIONS = (".pdf", ".txt", ".eml", ".msg")
+SUPPORTED_EXTENSIONS = (
+    ".pdf", ".txt", ".eml", ".msg",
+    ".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif",
+)
 
 _EXT_ICON = {
     ".pdf": "PDF",
     ".txt": "TXT",
     ".eml": "EML",
     ".msg": "MSG",
+    ".jpg": "IMG",
+    ".jpeg": "IMG",
+    ".png": "IMG",
+    ".webp": "IMG",
+    ".tiff": "IMG",
+    ".tif": "IMG",
+    ".bmp": "IMG",
+    ".gif": "IMG",
 }
 
 
@@ -84,8 +95,9 @@ class InputFrame(ctk.CTkFrame):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml *.msg"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("PDF", "*.pdf"),
+                ("Immagini", "*.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("Testo", "*.txt"),
                 ("Email", "*.eml *.msg"),
                 ("Tutti i file", "*.*"),

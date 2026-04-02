@@ -33,6 +33,10 @@ class AppConfig:
     rename_prompt: str = ""
     use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
+    # "accanto"      → next to source file (default)
+    # "sottocartella" → subfolder next to source (uses output_subfolder_name)
+    # "cartella"     → fixed directory (uses output_directory)
+    output_mode: str = "accanto"
     custom_schema_prompts: dict = field(default_factory=dict)
     asked_sendto: bool = False
     smart_text_detection: bool = True

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from cx_Freeze import setup, Executable
 
+sys.setrecursionlimit(5000)
+
 PROJECT_ROOT = Path(__file__).parent
 
 # Opzioni per il build (cx_Freeze traccia gli import, ma alcuni pacchetti

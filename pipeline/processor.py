@@ -25,6 +25,7 @@ from pipeline.events import (
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
+    PageNativeTextEvent,
     PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
@@ -154,6 +155,7 @@ class DocumentProcessor:
                     pdf_path=pdf_path,
                     on_page_complete=self._on_ocr_page,
                     on_page_skipped=self._on_page_skipped,
+                    on_page_native_text=self._on_page_native_text,
                     cancel_event=cancel_event,
                 )
             except Exception as e:
@@ -175,12 +177,17 @@ class DocumentProcessor:
         # Log text acquisition summary
         ocr_chars = len(ocr_result.combined_text)
         if is_pdf and self.config.run_ocr:
-            self.emit(LogEvent(
-                message=(
-                    f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
-                    f"pagine, {ocr_chars:,} caratteri totali"
-                )
-            ))
+            native = ocr_result.native_text_pages
+            ocr_pages = ocr_result.successful_pages - native
+            summary = (
+                f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
+                f"pagine, {ocr_chars:,} caratteri totali"
+            )
+            if native > 0:
+                summary += f" | {native} pagine con testo nativo (OCR saltato)"
+                if ocr_pages > 0:
+                    summary += f", {ocr_pages} pagine OCR"
+            self.emit(LogEvent(message=summary))
 
         if not ocr_result.combined_text.strip():
             self.emit(ErrorEvent(
@@ -332,6 +339,7 @@ class DocumentProcessor:
         successful = 0
         failed = 0
         total_cost_tracker = CostTracker()
+        self._native_pages_batch = 0
 
         for i, pdf_path in enumerate(pdf_paths):
             if cancel_event.is_set():
@@ -383,6 +391,10 @@ class DocumentProcessor:
         self.emit(LogEvent(
             message=f"  - Costo totale: ${total.get('cost_usd', 0):.4f}"
         ))
+        if self._native_pages_batch > 0:
+            self.emit(LogEvent(
+                message=f"  - Pagine con testo nativo (OCR saltato): {self._native_pages_batch}"
+            ))
 
         self.emit(BatchCompleteEvent(
             total_pdfs=len(pdf_paths),
@@ -469,6 +481,26 @@ class DocumentProcessor:
             page_num=page_num,
             total_pages=total_pages,
             reason=reason,
+        ))
+
+    def _on_page_native_text(
+        self, page_num: int, total_pages: int, char_count: int, reason: str
+    ) -> None:
+        """Callback from OCR pipeline when a page has native text (OCR skipped)."""
+        # Increment batch counter (attribute may not exist if called outside process_batch)
+        self._native_pages_batch = getattr(self, "_native_pages_batch", 0) + 1
+
+        self.emit(PageNativeTextEvent(
+            page_num=page_num,
+            total_pages=total_pages,
+            char_count=char_count,
+            reason=reason,
+        ))
+        self.emit(LogEvent(
+            message=(
+                f"Pagina {page_num + 1}/{total_pages}: testo nativo "
+                f"({char_count:,} car.) - OCR saltato"
+            )
         ))
 
     def _on_extraction_progress(self, **kwargs) -> None:

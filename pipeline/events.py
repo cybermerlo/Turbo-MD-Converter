@@ -95,6 +95,15 @@ class PageSkippedEvent(PipelineEvent):
 
 
 @dataclass
+class PageNativeTextEvent(PipelineEvent):
+    """Emitted when a page is processed via native text extraction (OCR skipped)."""
+    page_num: int = 0
+    total_pages: int = 0
+    char_count: int = 0
+    reason: str = ""
+
+
+@dataclass
 class FileRenamedEvent(PipelineEvent):
     """Emitted when a file is renamed based on extracted content."""
     original_path: Path | None = None

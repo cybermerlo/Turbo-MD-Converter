@@ -8,6 +8,7 @@ Regole:
 - Trascrivi numeri, date, codici e riferimenti normativi esattamente come appaiono
 - Preserva maiuscole/minuscole, accenti e punteggiatura
 - Se una parola e' illeggibile, indica [illeggibile]
+- Se è presente una immagine significativa nella pagina descrivila brevemente.
 - Non aggiungere interpretazioni o commenti
 - Restituisci SOLO il testo trascritto"""
 

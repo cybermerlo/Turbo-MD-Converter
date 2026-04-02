@@ -9,6 +9,7 @@ from typing import Callable
 from config.defaults import PAGE_SEPARATOR
 from config.settings import AppConfig
 from ocr.gemini_ocr import GeminiOCR, GeminiOCRError
+from ocr.page_analyzer import PageAnalyzer, PageType
 from ocr.pdf_converter import PDFConverter
 from utils.cost_tracker import CostTracker
 from utils.retry import retry_with_backoff
@@ -25,6 +26,7 @@ class OCRPageResult:
     error: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    skipped_ocr: bool = False  # True when native text extraction was used
 
 
 @dataclass
@@ -35,6 +37,7 @@ class OCRResult:
     combined_text: str = ""
     total_pages: int = 0
     successful_pages: int = 0
+    native_text_pages: int = 0  # Pages where OCR was skipped (native text detected)
 
 
 class OCRPipeline:
@@ -52,20 +55,25 @@ class OCRPipeline:
         )
         self.cost_tracker = cost_tracker
         self.model_id = config.ocr_model_id
+        self.smart_text_detection = config.smart_text_detection
+        self.page_analyzer = PageAnalyzer() if self.smart_text_detection else None
 
     def process_pdf(
         self,
         pdf_path: Path,
         on_page_complete: Callable[[int, int, bool], None] | None = None,
         on_page_skipped: Callable[[int, int, str], None] | None = None,
+        on_page_native_text: Callable[[int, int, int, str], None] | None = None,
         cancel_event: threading.Event | None = None,
     ) -> OCRResult:
         """Process all pages of a PDF sequentially.
 
         Args:
             pdf_path: Path to the PDF file.
-            on_page_complete: Callback(page_num, total_pages, success) after each page.
+            on_page_complete: Callback(page_num, total_pages, success) after each OCR page.
             on_page_skipped: Callback(page_num, total_pages, reason) when page text is empty.
+            on_page_native_text: Callback(page_num, total_pages, char_count, reason) when
+                native text is detected and OCR is skipped.
             cancel_event: Threading event to signal cancellation.
 
         Returns:
@@ -73,19 +81,58 @@ class OCRPipeline:
         """
         total_pages = self.converter.get_page_count(pdf_path)
         logger.info(
-            "Inizio OCR di '%s' (%d pagine, modello=%s, DPI=%d)",
+            "Inizio OCR di '%s' (%d pagine, modello=%s, DPI=%d, rilevamento_testo=%s)",
             pdf_path.name, total_pages, self.model_id,
             self.converter.dpi,
+            "attivo" if self.smart_text_detection else "disattivo",
         )
 
         result = OCRResult(pdf_path=pdf_path, total_pages=total_pages)
         page_texts = []
 
-        for page_num, image_bytes in self.converter.iter_pages(pdf_path):
+        for page_num, page in self.converter.iter_pages_raw(pdf_path):
             # Check for cancellation
             if cancel_event and cancel_event.is_set():
                 logger.info("OCR annullato dall'utente alla pagina %d", page_num + 1)
                 break
+
+            if self.smart_text_detection and self.page_analyzer:
+                analysis = self.page_analyzer.analyze_page(page)
+                logger.info(
+                    "Pagina %d/%d: %s",
+                    page_num + 1, total_pages, analysis.reason,
+                )
+
+                if analysis.page_type == PageType.TEXT_NATIVE:
+                    # Extract text directly — no Gemini API call needed
+                    text = self.page_analyzer.extract_text(page)
+                    page_result = OCRPageResult(
+                        page_num=page_num,
+                        text=text,
+                        success=True,
+                        skipped_ocr=True,
+                    )
+                    result.page_results.append(page_result)
+                    result.successful_pages += 1
+                    result.native_text_pages += 1
+                    page_texts.append(text)
+
+                    logger.info(
+                        "Pagina %d/%d: testo nativo estratto (%d car.), OCR saltato",
+                        page_num + 1, total_pages, len(text),
+                    )
+                    if on_page_native_text:
+                        on_page_native_text(
+                            page_num, total_pages,
+                            analysis.text_char_count, analysis.reason,
+                        )
+                    continue  # Skip the OCR path entirely
+
+                # SCANNED or MIXED — render to JPEG and send to Gemini
+                image_bytes = self.converter.render_page(page)
+            else:
+                # Smart detection disabled: render every page normally
+                image_bytes = self.converter.render_page(page)
 
             page_result = self._process_single_page(page_num, image_bytes)
             result.page_results.append(page_result)
@@ -123,8 +170,8 @@ class OCRPipeline:
         result.combined_text = "".join(parts).strip()
 
         logger.info(
-            "OCR completato: %d/%d pagine riuscite",
-            result.successful_pages, total_pages,
+            "OCR completato: %d/%d pagine riuscite (%d con testo nativo, OCR saltato)",
+            result.successful_pages, total_pages, result.native_text_pages,
         )
         return result
 

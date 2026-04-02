@@ -26,6 +26,7 @@ from pipeline.events import (
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
+    PageNativeTextEvent,
     PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
@@ -363,6 +364,13 @@ oLink.Save
 
         elif isinstance(event, ExtractionCompleteEvent):
             self.progress_frame.update_extraction_complete(event.extraction_count)
+
+        elif isinstance(event, PageNativeTextEvent):
+            self.log_frame.append(
+                f"Pagina {event.page_num + 1}/{event.total_pages}: "
+                f"testo nativo ({event.char_count:,} car.) - OCR saltato",
+                "INFO",
+            )
 
         elif isinstance(event, PageSkippedEvent):
             msg = (

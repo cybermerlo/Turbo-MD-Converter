@@ -42,6 +42,26 @@ class PDFConverter:
         finally:
             doc.close()
 
+    def iter_pages_raw(self, pdf_path: Path) -> Iterator[tuple[int, "fitz.Page"]]:
+        """Yields (page_number, fitz.Page) for every page without rendering.
+
+        The document is opened once and closed when the iterator is exhausted.
+        Use render_page() on each page to get JPEG bytes on demand.
+        """
+        doc = fitz.open(str(pdf_path))
+        try:
+            total = doc.page_count
+            logger.info("PDF '%s': %d pagine da analizzare", pdf_path.name, total)
+            for i in range(total):
+                yield (i, doc.load_page(i))
+        finally:
+            doc.close()
+
+    def render_page(self, page: "fitz.Page") -> bytes:
+        """Render an already-loaded fitz.Page to JPEG bytes."""
+        pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
+        return pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
+
     def iter_pages(self, pdf_path: Path) -> Iterator[tuple[int, bytes]]:
         """Yields (page_number, jpeg_bytes) for every page.
 

@@ -26,3 +26,6 @@ dist/
 output/*
 !output/*.py
 *.log
+
+# File generati dall'installer
+installer/output/

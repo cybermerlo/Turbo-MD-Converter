@@ -93,7 +93,7 @@ class DocumentProcessor:
         #          or sidecar .txt if OCR is disabled for a PDF)
         suffix = pdf_path.suffix.lower()
         is_image = suffix in IMAGE_EXTENSIONS
-        is_pdf = suffix not in (".txt", ".eml", ".msg") and not is_image
+        is_pdf = suffix not in (".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf") and not is_image
 
         if is_image:
             try:
@@ -536,6 +536,18 @@ class DocumentProcessor:
         elif suffix == ".msg":
             text = self._extract_msg_text(file_path)
             self.emit(LogEvent(message=f"File MSG letto direttamente (OCR non necessario)"))
+        elif suffix == ".docx":
+            text = self._extract_docx_text(file_path)
+            self.emit(LogEvent(message=f"File DOCX letto direttamente (OCR non necessario)"))
+        elif suffix in (".html", ".htm"):
+            text = self._extract_html_text(file_path)
+            self.emit(LogEvent(message=f"File HTML letto direttamente (OCR non necessario)"))
+        elif suffix == ".rtf":
+            text = self._extract_rtf_text(file_path)
+            self.emit(LogEvent(message=f"File RTF letto direttamente (OCR non necessario)"))
+        elif suffix == ".md":
+            text = file_path.read_text(encoding="utf-8", errors="replace")
+            self.emit(LogEvent(message=f"File MD letto direttamente (OCR non necessario)"))
         else:
             text = file_path.read_text(encoding="utf-8", errors="replace")
             self.emit(LogEvent(message=f"File TXT letto direttamente (OCR non necessario)"))
@@ -603,3 +615,60 @@ class DocumentProcessor:
                 parts.append(body)
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _extract_docx_text(file_path: Path) -> str:
+        """Extract plain-text from DOCX files using python-docx."""
+        import docx
+        doc = docx.Document(file_path)
+        parts = []
+        for p in doc.paragraphs:
+            if p.text:
+                parts.append(p.text)
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_html_text(file_path: Path) -> str:
+        """Extract plain-text and metadata from HTML files using beautifulsoup4."""
+        import re
+        from bs4 import BeautifulSoup
+        
+        html_content = file_path.read_text(encoding="utf-8", errors="replace")
+        parts = []
+        
+        # 1. Try to find the "saved from url" comment (often added by browsers like Chrome/Edge)
+        saved_url_match = re.search(r'<!--\s*saved from url=\(\d+\)(.*?)\s*-->', html_content)
+        if saved_url_match:
+            parts.append(f"Source URL: {saved_url_match.group(1).strip()}")
+            
+        soup = BeautifulSoup(html_content, "html.parser")
+        
+        # 2. Extract Title
+        if soup.title and soup.title.string:
+            parts.append(f"Title: {soup.title.string.strip()}")
+            
+        # 3. Extract common meta tags
+        for meta_name in ["description", "author", "keywords"]:
+            meta_tag = soup.find("meta", attrs={"name": lambda x: x and x.lower() == meta_name})
+            if meta_tag and meta_tag.get("content"):
+                parts.append(f"{meta_name.capitalize()}: {meta_tag.get('content').strip()}")
+                
+        # 4. Extract Canonical URL (if source URL wasn't found)
+        canonical = soup.find("link", rel="canonical")
+        if canonical and canonical.get("href") and not saved_url_match:
+            parts.append(f"Canonical URL: {canonical.get('href').strip()}")
+            
+        if parts:
+            parts.append("\n--- TESTO DEL SITO ---")
+            
+        # 5. Extract actual body text
+        parts.append(soup.get_text(separator="\n", strip=True))
+        
+        return "\n".join(parts)
+
+    @staticmethod
+    def _extract_rtf_text(file_path: Path) -> str:
+        """Extract plain-text from RTF files using striprtf."""
+        from striprtf.striprtf import rtf_to_text
+        rtf_content = file_path.read_text(encoding="utf-8", errors="replace")
+        return rtf_to_text(rtf_content)

@@ -6,7 +6,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 SUPPORTED_EXTENSIONS = (
-    ".pdf", ".txt", ".eml", ".msg",
+    ".pdf", ".txt", ".eml", ".msg", ".docx", ".html", ".htm", ".md", ".rtf",
     ".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif",
 )
 
@@ -15,6 +15,11 @@ _EXT_ICON = {
     ".txt": "TXT",
     ".eml": "EML",
     ".msg": "MSG",
+    ".docx": "DOCX",
+    ".html": "HTML",
+    ".htm": "HTML",
+    ".md": "MD",
+    ".rtf": "RTF",
     ".jpg": "IMG",
     ".jpeg": "IMG",
     ".png": "IMG",
@@ -65,6 +70,12 @@ class InputFrame(ctk.CTkFrame):
         )
         self.add_folder_btn.pack(side="left", padx=(0, 5))
 
+        self.paste_text_btn = ctk.CTkButton(
+            btn_row, text="Incolla Appunti",
+            command=self._paste_text, width=110,
+        )
+        self.paste_text_btn.pack(side="left", padx=(0, 5))
+
         self.clear_btn = ctk.CTkButton(
             btn_row, text="Svuota",
             command=self._clear_files, width=70,
@@ -95,11 +106,11 @@ class InputFrame(ctk.CTkFrame):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.html *.htm *.md *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("PDF", "*.pdf"),
                 ("Immagini", "*.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
-                ("Testo", "*.txt"),
-                ("Email", "*.eml *.msg"),
+                ("Testo ed Email", "*.txt *.eml *.msg *.md *.html *.htm *.rtf"),
+                ("Office/RTF", "*.docx *.rtf"),
                 ("Tutti i file", "*.*"),
             ],
         )
@@ -145,6 +156,32 @@ class InputFrame(ctk.CTkFrame):
         if self.on_files_changed:
             self.on_files_changed(self._file_paths)
 
+    def _paste_text(self) -> None:
+        """Legge il testo dagli appunti e crea un file di testo temporaneo."""
+        try:
+            clipboard_text = self.master.clipboard_get()
+            if not clipboard_text or not clipboard_text.strip():
+                return
+            
+            import time
+            import tempfile
+            
+            # Crea un file temporaneo con il testo
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            temp_dir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
+            temp_dir.mkdir(exist_ok=True, parents=True)
+            
+            temp_file = temp_dir / f"Appunti_{timestamp}.txt"
+            temp_file.write_text(clipboard_text, encoding="utf-8")
+            
+            if temp_file not in self._file_paths:
+                self._file_paths.append(temp_file)
+            self._refresh_list()
+            
+        except Exception:
+            # Nessun testo negli appunti o errore lettura
+            pass
+
     # ─── Public API ──────────────────────────────────────────────────────────
 
     def get_file_paths(self) -> list[Path]:
@@ -168,4 +205,5 @@ class InputFrame(ctk.CTkFrame):
         state = "normal" if enabled else "disabled"
         self.add_files_btn.configure(state=state)
         self.add_folder_btn.configure(state=state)
+        self.paste_text_btn.configure(state=state)
         self.clear_btn.configure(state=state)

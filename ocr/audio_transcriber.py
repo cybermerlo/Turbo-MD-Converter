@@ -2,10 +2,10 @@
 
 import base64
 import logging
+import time
 from pathlib import Path
 
 from config.defaults import DEFAULT_TRANSCRIPTION_PROMPT
-from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
 
@@ -113,33 +113,31 @@ class AudioTranscriber:
                 "output_tokens": output_tokens,
             }
 
-        def on_retry(attempt: int, exc: Exception):
-            logger.warning(
-                "Retry %d/3 trascrizione '%s': %s",
-                attempt, audio_path.name, exc,
-            )
+        last_exc: Exception | None = None
+        for attempt in range(4):  # tentativo 0 + max 3 retry
+            try:
+                result = do_transcribe()
+                logger.info(
+                    "Trascrizione completata: '%s' – %d caratteri, %d+%d token",
+                    audio_path.name, len(result["text"]),
+                    result["input_tokens"], result["output_tokens"],
+                )
+                return result
+            except AudioTranscriberError:
+                # 429 e altri errori non recuperabili → fallisce subito
+                raise
+            except Exception as e:
+                last_exc = e
+                if attempt == 3:
+                    break
+                wait = min(2.0 * (2 ** attempt), 30.0)
+                logger.warning(
+                    "Retry %d/3 trascrizione '%s': %s",
+                    attempt + 1, audio_path.name, e,
+                )
+                time.sleep(wait)
 
-        try:
-            result = retry_with_backoff(
-                func=do_transcribe,
-                max_retries=3,
-                base_delay=2.0,
-                # Non ritentare su AudioTranscriberError (include i 429)
-                retryable_exceptions=(Exception,),
-                on_retry=on_retry,
-            )
-            logger.info(
-                "Trascrizione completata: '%s' – %d caratteri, %d+%d token",
-                audio_path.name, len(result["text"]),
-                result["input_tokens"], result["output_tokens"],
-            )
-            return result
-
-        except AudioTranscriberError:
-            # Già formattato con messaggio chiaro, rilancia direttamente
-            raise
-        except Exception as e:
-            logger.error("Errore trascrizione '%s': %s", audio_path.name, e)
-            raise AudioTranscriberError(
-                f"Trascrizione fallita per '{audio_path.name}': {e}"
-            ) from e
+        logger.error("Errore trascrizione '%s': %s", audio_path.name, last_exc)
+        raise AudioTranscriberError(
+            f"Trascrizione fallita per '{audio_path.name}': {last_exc}"
+        ) from last_exc

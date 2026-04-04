@@ -82,12 +82,11 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # Logo icon
         try:
-            from PIL import Image, ImageTk
+            from PIL import Image
             logo_path = Path(__file__).parent.parent / "logo.png"
             if logo_path.exists():
                 img = Image.open(logo_path)
-                img = img.resize((32, 32), Image.LANCZOS)
-                self.logo_img = ImageTk.PhotoImage(img)
+                self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(32, 32))
                 ctk.CTkLabel(top_bar, image=self.logo_img, text="").pack(side="left", padx=(0, 10))
         except Exception:
             pass

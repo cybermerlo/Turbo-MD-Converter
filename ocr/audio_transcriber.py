@@ -33,7 +33,7 @@ class AudioTranscriber:
         model_id: str = "voxtral-small-latest",
         transcription_prompt: str = DEFAULT_TRANSCRIPTION_PROMPT,
     ):
-        from mistralai import Mistral
+        from mistralai.client import Mistral
         self.client = Mistral(api_key=api_key)
         self.model_id = model_id
         self.transcription_prompt = transcription_prompt

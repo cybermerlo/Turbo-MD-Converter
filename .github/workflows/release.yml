@@ -1,0 +1,73 @@
+name: Build & Release Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Crea GitHub Release (richiede tag esistente)'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install cx_Freeze
+          pip install -r requirements.txt
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        run: python build_installer.py
+
+      - name: Find installer path
+        id: installer
+        shell: bash
+        run: |
+          FILE=$(ls installer/output/*.exe | sort | tail -1)
+          echo "path=$FILE" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$FILE")" >> "$GITHUB_OUTPUT"
+          VERSION=$(basename "$FILE" .exe | sed 's/TurboMDConverter_Setup_//')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.installer.outputs.name }}
+          path: ${{ steps.installer.outputs.path }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.installer.outputs.version) }}
+          name: "Turbo MD Converter ${{ steps.installer.outputs.version }}"
+          body: |
+            ## Turbo MD Converter ${{ steps.installer.outputs.version }}
+
+            ### Installazione
+            Scarica `${{ steps.installer.outputs.name }}` ed eseguilo.
+            Non è richiesto Python né dipendenze aggiuntive.
+
+            ### Requisiti
+            - Windows 10 o superiore (64-bit)
+          files: ${{ steps.installer.outputs.path }}
+          fail_on_unmatched_files: true

@@ -45,14 +45,14 @@ def _section_label(parent, text: str) -> ctk.CTkLabel:
     )
 
 
-class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
+class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
     """Main application window."""
 
     def __init__(self, config: AppConfig, initial_files: list[Path] | None = None):
         super().__init__()
         self.TkdndVersion = TkinterDnD._require(self)
 
-        self.title("OCR + LangExtract")
+        self.title("Turbo MD Converter")
         self.geometry("1140x780")
         self.minsize(960, 620)
         ctk.set_appearance_mode("system")
@@ -80,9 +80,21 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
         top_bar.pack(padx=14, pady=(12, 0), fill="x")
         top_bar.pack_propagate(False)
 
+        # Logo icon
+        try:
+            from PIL import Image, ImageTk
+            logo_path = Path(__file__).parent.parent / "logo.png"
+            if logo_path.exists():
+                img = Image.open(logo_path)
+                img = img.resize((32, 32), Image.LANCZOS)
+                self.logo_img = ImageTk.PhotoImage(img)
+                ctk.CTkLabel(top_bar, image=self.logo_img, text="").pack(side="left", padx=(0, 10))
+        except Exception:
+            pass
+
         ctk.CTkLabel(
             top_bar,
-            text="OCR + LangExtract",
+            text="Turbo MD Converter",
             font=ctk.CTkFont(size=20, weight="bold"),
         ).pack(side="left")
 
@@ -550,7 +562,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
 
         sendto_dir = Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\SendTo"))
-        shortcut_path = sendto_dir / "OCR+Langextract.lnk"
+        shortcut_path = sendto_dir / "TurboMDConverter.lnk"
 
         if shortcut_path.exists():
             if not self.config.asked_sendto:
@@ -563,7 +575,7 @@ class OCRLangExtractApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         response = messagebox.askyesno(
             "Integrazione Windows",
-            "Aggiungere 'OCR+Langextract' al menu 'Invia a' di Windows?\n\n"
+            "Aggiungere 'Turbo MD Converter' al menu 'Invia a' di Windows?\n\n"
             "Permette di selezionare file o cartelle, fare clic destro\n"
             "e inviarli direttamente a questa applicazione.",
             parent=self,
@@ -576,7 +588,7 @@ Set oWS = WScript.CreateObject("WScript.Shell")
 sLinkFile = "{shortcut_path}"
 Set oLink = oWS.CreateShortcut(sLinkFile)
 oLink.TargetPath = "{exe_path}"
-oLink.Description = "Invia a OCR+Langextract"
+oLink.Description = "Invia a Turbo MD Converter"
 oLink.Save
 '''
             vbs_path = sendto_dir / "temp_create_shortcut.vbs"

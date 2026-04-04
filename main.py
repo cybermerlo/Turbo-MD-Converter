@@ -9,7 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import load_config
-from gui.app import OCRLangExtractApp
+from gui.app import TurboMDConverterApp
 from utils.logging_config import setup_logging
 
 
@@ -29,7 +29,7 @@ def main():
                 for ext in SUPPORTED_EXTENSIONS:
                     initial_files.extend(p.glob(f"*{ext}"))
                     
-    app = OCRLangExtractApp(config, initial_files=initial_files)
+    app = TurboMDConverterApp(config, initial_files=initial_files)
     app.mainloop()
 
 

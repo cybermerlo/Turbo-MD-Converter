@@ -80,3 +80,49 @@ Name: "{sendto}\Turbo MD Converter";            Filename: "{app}\{#AppExeName}";
 ; ── Avvia l'app al termine dell'installazione ─────────────────────────────────
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Avvia Turbo MD Converter"; Flags: nowait postinstall skipifsilent
+
+; ── Pagina API key e scrittura config ────────────────────────────────────────
+[Code]
+
+var
+  ApiKeyPage: TInputQueryWizardPage;
+
+procedure InitializeWizard;
+begin
+  ApiKeyPage := CreateInputQueryPage(
+    wpSelectTasks,
+    'Chiave API Google Gemini',
+    'Configura l''accesso all''intelligenza artificiale',
+    'Turbo MD Converter usa Google Gemini per l''OCR e l''estrazione dati.' + #13#10 +
+    'Ottieni una chiave gratuita su: https://aistudio.google.com/apikey' + #13#10#13#10 +
+    'Puoi lasciare vuoto e inserirla in seguito dalle Impostazioni dell''app.'
+  );
+  ApiKeyPage.Add('Chiave API Gemini:', True);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ConfigDir, ConfigFile, ApiKey, Json: string;
+begin
+  if CurStep <> ssPostInstall then Exit;
+
+  ApiKey := Trim(ApiKeyPage.Values[0]);
+  if ApiKey = '' then Exit;
+
+  ConfigDir  := ExpandConstant('{userappdata}\OCRLangExtract');
+  ConfigFile := ConfigDir + '\config.json';
+
+  if not DirExists(ConfigDir) then
+    ForceDirectories(ConfigDir);
+
+  { Scrivi solo se il file non esiste (installazione nuova).
+    In caso di aggiornamento l'utente ha già la sua chiave nel config. }
+  if not FileExists(ConfigFile) then
+  begin
+    Json := '{' + #13#10 +
+            '  "gemini_api_key": "' + ApiKey + '",' + #13#10 +
+            '  "langextract_api_key": "' + ApiKey + '"' + #13#10 +
+            '}';
+    SaveStringToFile(ConfigFile, Json, False);
+  end;
+end;

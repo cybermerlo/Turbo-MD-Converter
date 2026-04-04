@@ -24,6 +24,12 @@ class AudioTranscriberError(Exception):
     pass
 
 
+def _is_rate_limit(exc: Exception) -> bool:
+    """Return True if the exception is an HTTP 429 rate-limit response."""
+    msg = str(exc).lower()
+    return "429" in msg or "rate_limit" in msg or "rate limit" in msg
+
+
 class AudioTranscriber:
     """Transcribes audio files using Mistral Voxtral Small via chat completions."""
 
@@ -70,22 +76,34 @@ class AudioTranscriber:
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
         def do_transcribe():
-            response = self.client.chat.complete(
-                model=self.model_id,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "input_audio": audio_base64,
-                        },
-                        {
-                            "type": "text",
-                            "text": self.transcription_prompt,
-                        },
-                    ],
-                }],
-            )
+            try:
+                response = self.client.chat.complete(
+                    model=self.model_id,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": audio_base64,
+                            },
+                            {
+                                "type": "text",
+                                "text": self.transcription_prompt,
+                            },
+                        ],
+                    }],
+                )
+            except Exception as api_exc:
+                # 429 Rate Limit: non ha senso ritentare subito, rilancia
+                # direttamente come AudioTranscriberError non-retryable
+                if _is_rate_limit(api_exc):
+                    raise AudioTranscriberError(
+                        "Quota API Mistral esaurita (HTTP 429). "
+                        "Verifica il tuo piano su console.mistral.ai → "
+                        "aggiungi un metodo di pagamento per sbloccare l'accesso."
+                    ) from api_exc
+                raise
+
             text = response.choices[0].message.content or ""
             input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
             output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
@@ -106,7 +124,8 @@ class AudioTranscriber:
                 func=do_transcribe,
                 max_retries=3,
                 base_delay=2.0,
-                retryable_exceptions=(AudioTranscriberError, Exception),
+                # Non ritentare su AudioTranscriberError (include i 429)
+                retryable_exceptions=(Exception,),
                 on_retry=on_retry,
             )
             logger.info(
@@ -116,6 +135,9 @@ class AudioTranscriber:
             )
             return result
 
+        except AudioTranscriberError:
+            # Già formattato con messaggio chiaro, rilancia direttamente
+            raise
         except Exception as e:
             logger.error("Errore trascrizione '%s': %s", audio_path.name, e)
             raise AudioTranscriberError(

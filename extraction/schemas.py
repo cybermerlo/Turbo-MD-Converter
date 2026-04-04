@@ -471,25 +471,25 @@ def build_bank_statement_schema() -> SchemaPreset:
         INTESA SANPAOLO
         ESTRATTO CONTO N. 003/2024
         AL 30.09.2024
-        C/C N. 50381/1000/00002230
+        C/C N. 50381/1000/00000000
 
         Dettaglio movimenti del conto corrente.
 
-        Saldo iniziale al 30.06.2024  + 3.086,87
+        Saldo iniziale al 30.06.2024  + 3.000,00
 
         Data Operazione  Data Valuta  Descrizione                      Addebiti   Accrediti
-        01.07.2024       01.07.2024   Stipendio o Pensione                          1.886,03
-                                     PENSIONE N5400/XXX/48001094/XX RATA07/24
-                                     SCUDELLA GRAZIANO
-        02.07.2024       30.06.2024   Spese emis. B/C                      0,70
-        16.07.2024       16.07.2024   Bonifico a Vostro favore                       800,00
-                                     MITT.: SPAGNOLO GIACOMO
-        16.07.2024       16.07.2024   Pagamento ADUE                    2.043,30
-                                     FONDAZIONE OPERA IMMACOLATA CONCEZI
+        01.07.2024       01.07.2024   Stipendio o Pensione                          1.500,00
+                                     PENSIONE N5400/XXX/00000000/XX RATA07/24
+                                     ROSSI MARIO
+        02.07.2024       30.06.2024   Spese emis. B/C                      1,50
+        16.07.2024       16.07.2024   Bonifico a Vostro favore                       500,00
+                                     MITT.: BIANCHI GIOVANNI
+        16.07.2024       16.07.2024   Pagamento Utenze                  1.200,00
+                                     GESTORE ENERGIA SPA
 
-        Totali                                                          6.327,20   7.050,08
+        Totali                                                          1.201,50   2.000,00
 
-        Saldo finale al 30.09.2024  a Vostro credito  + 3.809,75""")
+        Saldo finale al 30.09.2024  a Vostro credito  + 3.798,50""")
 
     example_extractions = [
         lx.data.Extraction(
@@ -504,12 +504,12 @@ def build_bank_statement_schema() -> SchemaPreset:
         ),
         lx.data.Extraction(
             extraction_class="conto",
-            extraction_text="50381/1000/00002230",
+            extraction_text="50381/1000/00000000",
             attributes={"tipo": "conto_corrente"},
         ),
         lx.data.Extraction(
             extraction_class="saldo_iniziale",
-            extraction_text="+ 3.086,87",
+            extraction_text="+ 3.000,00",
             attributes={"data": "30.06.2024", "valuta": "EUR", "segno": "credito",
                          "estratto_conto_ref": "003/2024"},
         ),
@@ -519,9 +519,9 @@ def build_bank_statement_schema() -> SchemaPreset:
             attributes={
                 "data_operazione": "01.07.2024",
                 "data_valuta": "01.07.2024",
-                "importo": "1.886,03",
+                "importo": "1.500,00",
                 "tipo": "accredito",
-                "descrizione_extra": "PENSIONE N5400/XXX/48001094/XX RATA07/24 SCUDELLA GRAZIANO",
+                "descrizione_extra": "PENSIONE N5400/XXX/00000000/XX RATA07/24 ROSSI MARIO",
             },
         ),
         lx.data.Extraction(
@@ -530,7 +530,7 @@ def build_bank_statement_schema() -> SchemaPreset:
             attributes={
                 "data_operazione": "02.07.2024",
                 "data_valuta": "30.06.2024",
-                "importo": "0,70",
+                "importo": "1,50",
                 "tipo": "addebito",
             },
         ),
@@ -540,35 +540,35 @@ def build_bank_statement_schema() -> SchemaPreset:
             attributes={
                 "data_operazione": "16.07.2024",
                 "data_valuta": "16.07.2024",
-                "importo": "800,00",
+                "importo": "500,00",
                 "tipo": "accredito",
-                "mittente": "SPAGNOLO GIACOMO",
+                "mittente": "BIANCHI GIOVANNI",
             },
         ),
         lx.data.Extraction(
             extraction_class="movimento",
-            extraction_text="Pagamento ADUE",
+            extraction_text="Pagamento Utenze",
             attributes={
                 "data_operazione": "16.07.2024",
                 "data_valuta": "16.07.2024",
-                "importo": "2.043,30",
+                "importo": "1.200,00",
                 "tipo": "addebito",
-                "beneficiario": "FONDAZIONE OPERA IMMACOLATA CONCEZI",
+                "beneficiario": "GESTORE ENERGIA SPA",
             },
         ),
         lx.data.Extraction(
             extraction_class="totale_addebiti",
-            extraction_text="6.327,20",
+            extraction_text="1.201,50",
             attributes={"valuta": "EUR"},
         ),
         lx.data.Extraction(
             extraction_class="totale_accrediti",
-            extraction_text="7.050,08",
+            extraction_text="2.000,00",
             attributes={"valuta": "EUR"},
         ),
         lx.data.Extraction(
             extraction_class="saldo_finale",
-            extraction_text="+ 3.809,75",
+            extraction_text="+ 3.798,50",
             attributes={"data": "30.09.2024", "valuta": "EUR", "segno": "credito",
                          "estratto_conto_ref": "003/2024"},
         ),

@@ -91,23 +91,30 @@ procedure InitializeWizard;
 begin
   ApiKeyPage := CreateInputQueryPage(
     wpSelectTasks,
-    'Chiave API Google Gemini',
+    'Chiavi API',
     'Configura l''accesso all''intelligenza artificiale',
-    'Turbo MD Converter usa Google Gemini per l''OCR e l''estrazione dati.' + #13#10 +
-    'Ottieni una chiave gratuita su: https://aistudio.google.com/apikey' + #13#10#13#10 +
-    'Puoi lasciare vuoto e inserirla in seguito dalle Impostazioni dell''app.'
+    'Turbo MD Converter usa due servizi AI:' + #13#10 +
+    '  • Google Gemini – per OCR e estrazione dati (aistudio.google.com/apikey)' + #13#10 +
+    '  • Mistral Voxtral – per la trascrizione di file audio (console.mistral.ai)' + #13#10#13#10 +
+    'Puoi lasciare vuoto e inserire le chiavi in seguito dalle Impostazioni dell''app.'
   );
   ApiKeyPage.Add('Chiave API Gemini:', True);
+  ApiKeyPage.Add('Chiave API Mistral (opzionale):', True);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ConfigDir, ConfigFile, ApiKey, Json: string;
+  ConfigDir, ConfigFile, GeminiKey, MistralKey, Json: string;
+  HasGemini, HasMistral: Boolean;
 begin
   if CurStep <> ssPostInstall then Exit;
 
-  ApiKey := Trim(ApiKeyPage.Values[0]);
-  if ApiKey = '' then Exit;
+  GeminiKey  := Trim(ApiKeyPage.Values[0]);
+  MistralKey := Trim(ApiKeyPage.Values[1]);
+  HasGemini  := GeminiKey <> '';
+  HasMistral := MistralKey <> '';
+
+  if not HasGemini and not HasMistral then Exit;
 
   ConfigDir  := ExpandConstant('{userappdata}\OCRLangExtract');
   ConfigFile := ConfigDir + '\config.json';
@@ -116,13 +123,22 @@ begin
     ForceDirectories(ConfigDir);
 
   { Scrivi solo se il file non esiste (installazione nuova).
-    In caso di aggiornamento l'utente ha già la sua chiave nel config. }
+    In caso di aggiornamento l'utente ha già le sue chiavi nel config. }
   if not FileExists(ConfigFile) then
   begin
-    Json := '{' + #13#10 +
-            '  "gemini_api_key": "' + ApiKey + '",' + #13#10 +
-            '  "langextract_api_key": "' + ApiKey + '"' + #13#10 +
-            '}';
+    Json := '{' + #13#10;
+    if HasGemini then
+    begin
+      Json := Json + '  "gemini_api_key": "' + GeminiKey + '",' + #13#10;
+      Json := Json + '  "langextract_api_key": "' + GeminiKey + '"';
+      if HasMistral then
+        Json := Json + ',' + #13#10
+      else
+        Json := Json + #13#10;
+    end;
+    if HasMistral then
+      Json := Json + '  "mistral_api_key": "' + MistralKey + '"' + #13#10;
+    Json := Json + '}';
     SaveStringToFile(ConfigFile, Json, False);
   end;
 end;

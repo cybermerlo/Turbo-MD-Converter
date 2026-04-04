@@ -39,6 +39,7 @@ from utils.file_renamer import (
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif")
+AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
 
 
 class DocumentProcessor:
@@ -54,6 +55,12 @@ class DocumentProcessor:
         self.cost_tracker = CostTracker()
 
         self.ocr_pipeline = OCRPipeline(config, self.cost_tracker)
+
+        from ocr.audio_transcriber import AudioTranscriber
+        self.audio_transcriber = (
+            AudioTranscriber(config.mistral_api_key)
+            if config.mistral_api_key else None
+        )
 
         schema = get_schema_preset(config.active_schema)
         # Apply custom prompt override if the user edited the schema
@@ -93,10 +100,60 @@ class DocumentProcessor:
         # Phase 1: Text acquisition (OCR for PDF/image, direct read for TXT/EML/MSG,
         #          or sidecar .txt if OCR is disabled for a PDF)
         suffix = pdf_path.suffix.lower()
+        is_audio = suffix in AUDIO_EXTENSIONS
         is_image = suffix in IMAGE_EXTENSIONS
-        is_pdf = suffix not in (".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf") and not is_image
+        is_pdf = suffix not in (".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf") and not is_image and not is_audio
 
-        if is_image:
+        if is_audio:
+            if not self.audio_transcriber:
+                self.emit(ErrorEvent(
+                    error_message=(
+                        "Chiave API Mistral non configurata. "
+                        "Inseriscila nelle Impostazioni → tab API."
+                    ),
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
+
+            self.emit(LogEvent(message=f"Avvio trascrizione audio: {pdf_path.name}"))
+            try:
+                from ocr.audio_transcriber import AudioTranscriberError
+                trans_result = self.audio_transcriber.transcribe(pdf_path)
+            except Exception as e:
+                self.emit(ErrorEvent(
+                    error_message=f"Errore trascrizione audio: {e}",
+                    recoverable=False,
+                ))
+                cost_info = self.cost_tracker.get_totals()
+                self.emit(PipelineCompleteEvent(
+                    pdf_path=pdf_path, success=False,
+                    cost_info=cost_info,
+                ))
+                return False, cost_info
+
+            self.cost_tracker.add_call(
+                model_id="voxtral-small-latest",
+                input_tokens=trans_result["input_tokens"],
+                output_tokens=trans_result["output_tokens"],
+                phase="transcription",
+            )
+            ocr_result = self._make_ocr_result_from_text(
+                pdf_path, trans_result["text"]
+            )
+            self.emit(LogEvent(
+                message=(
+                    f"Trascrizione audio completata: "
+                    f"{len(trans_result['text']):,} caratteri, "
+                    f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
+                )
+            ))
+
+        elif is_image:
             try:
                 ocr_result = self.ocr_pipeline.ocr_single_image(
                     image_path=pdf_path,
@@ -407,6 +464,11 @@ class DocumentProcessor:
             self.emit(LogEvent(
                 message=f"  - Costo estrazione: ~${ext_cost.get('cost_usd', 0):.4f} (stimato)"
             ))
+        trans_cost = total_cost_info.get("transcription", {})
+        if trans_cost.get("cost_usd", 0) > 0:
+            self.emit(LogEvent(
+                message=f"  - Costo trascrizione audio: ~${trans_cost.get('cost_usd', 0):.4f} (stimato)"
+            ))
         self.emit(LogEvent(
             message=f"  - Costo totale: ${total.get('cost_usd', 0):.4f}"
         ))
@@ -525,6 +587,17 @@ class DocumentProcessor:
     def _on_extraction_progress(self, **kwargs) -> None:
         """Callback from LegalExtractor as batches of chunks complete."""
         self.emit(ExtractionProgressEvent(**kwargs))
+
+    @staticmethod
+    def _make_ocr_result_from_text(file_path: Path, text: str):
+        """Wrap a plain text string into an OCRResult (1 page, no OCR)."""
+        from ocr.ocr_pipeline import OCRResult
+        return OCRResult(
+            pdf_path=file_path,
+            combined_text=text,
+            total_pages=1,
+            successful_pages=1,
+        )
 
     def _read_text_file(self, file_path: Path, cancel_event: threading.Event | None = None):
         """Read text content directly from TXT, EML or MSG files (no OCR needed)."""

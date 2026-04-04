@@ -31,6 +31,7 @@ build_exe_options = {
         "PIL._tkinter_finder",
         "dotenv",
         "tkinterdnd2",
+        "mistralai",
         # moduli dell'app
         "config",
         "gui",

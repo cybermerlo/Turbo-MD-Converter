@@ -44,7 +44,7 @@ class CostTracker:
         total_out = 0
         total_cost = 0.0
 
-        for phase in ("ocr", "extraction"):
+        for phase in ("ocr", "extraction", "transcription"):
             phase_calls = [c for c in self._calls if c.phase == phase]
             in_tokens = sum(c.input_tokens for c in phase_calls)
             out_tokens = sum(c.output_tokens for c in phase_calls)

@@ -8,6 +8,7 @@ import customtkinter as ctk
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".html", ".htm", ".md", ".rtf",
     ".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif",
+    ".mp3", ".wav", ".flac", ".m4a", ".ogg",
 )
 
 _EXT_ICON = {
@@ -28,6 +29,11 @@ _EXT_ICON = {
     ".tif": "IMG",
     ".bmp": "IMG",
     ".gif": "IMG",
+    ".mp3": "AUD",
+    ".wav": "AUD",
+    ".flac": "AUD",
+    ".m4a": "AUD",
+    ".ogg": "AUD",
 }
 
 
@@ -106,11 +112,12 @@ class InputFrame(ctk.CTkFrame):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.html *.htm *.md *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.html *.htm *.md *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif *.mp3 *.wav *.flac *.m4a *.ogg"),
                 ("PDF", "*.pdf"),
                 ("Immagini", "*.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("Testo ed Email", "*.txt *.eml *.msg *.md *.html *.htm *.rtf"),
                 ("Office/RTF", "*.docx *.rtf"),
+                ("Audio", "*.mp3 *.wav *.flac *.m4a *.ogg"),
                 ("Tutti i file", "*.*"),
             ],
         )

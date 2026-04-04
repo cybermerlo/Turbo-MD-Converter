@@ -1,5 +1,15 @@
 """Default prompts, constants, and schema preset definitions."""
 
+DEFAULT_TRANSCRIPTION_PROMPT = """Trascrivi fedelmente e integralmente l'audio fornito.
+
+Regole:
+- Trascrivi ogni parola pronunciata, inclusi riempitivi ed esitazioni
+- Mantieni la punteggiatura e la struttura dei periodi
+- Se ci sono più interlocutori, separa gli interventi con un a capo
+- Se una parola è incomprensibile, indica [incomprensibile]
+- Non aggiungere riassunti, commenti o interpretazioni
+- Restituisci SOLO il testo trascritto"""
+
 DEFAULT_OCR_PROMPT = """Sei un assistente OCR specializzato in documenti legali italiani.
 Analizza questa immagine di una pagina di un documento legale e trascrivi TUTTO il testo visibile in modo preciso e completo.
 
@@ -40,6 +50,11 @@ Testo OCR:
 ---
 """
 
+# Available audio transcription models
+AVAILABLE_AUDIO_MODELS = [
+    "voxtral-small-latest",
+]
+
 # Available OCR models
 AVAILABLE_OCR_MODELS = [
     "gemini-3-flash-preview",
@@ -63,6 +78,10 @@ PRICING = {
     "gemini-2.5-flash": {
         "input_per_1m": 0.15,
         "output_per_1m": 0.60,
+    },
+    "voxtral-small-latest": {
+        "input_per_1m": 0.10,
+        "output_per_1m": 0.30,
     },
 }
 

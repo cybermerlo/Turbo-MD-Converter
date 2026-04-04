@@ -40,6 +40,7 @@ class AppConfig:
     custom_schema_prompts: dict = field(default_factory=dict)
     asked_sendto: bool = False
     smart_text_detection: bool = True
+    mistral_api_key: str = ""
 
 
 def get_config_dir() -> Path:
@@ -54,10 +55,10 @@ def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
 
-def load_env_keys(project_dir: Path | None = None) -> tuple[str, str]:
+def load_env_keys(project_dir: Path | None = None) -> tuple[str, str, str]:
     """Load API keys from .env file.
 
-    Returns (gemini_api_key, langextract_api_key).
+    Returns (gemini_api_key, langextract_api_key, mistral_api_key).
     """
     if project_dir:
         load_dotenv(project_dir / ".env")
@@ -66,7 +67,8 @@ def load_env_keys(project_dir: Path | None = None) -> tuple[str, str]:
 
     gemini_key = os.environ.get("GEMINI_API_KEY", "")
     langextract_key = os.environ.get("LANGEXTRACT_API_KEY", gemini_key)
-    return gemini_key, langextract_key
+    mistral_key = os.environ.get("MISTRAL_API_KEY", "")
+    return gemini_key, langextract_key, mistral_key
 
 
 def load_config(config_path: Path | None = None,
@@ -92,11 +94,13 @@ def load_config(config_path: Path | None = None,
         config.ocr_prompt = DEFAULT_OCR_PROMPT
 
     # Override API keys from environment
-    gemini_key, langextract_key = load_env_keys(project_dir)
+    gemini_key, langextract_key, mistral_key = load_env_keys(project_dir)
     if gemini_key:
         config.gemini_api_key = gemini_key
     if langextract_key:
         config.langextract_api_key = langextract_key
+    if mistral_key:
+        config.mistral_api_key = mistral_key
 
     return config
 

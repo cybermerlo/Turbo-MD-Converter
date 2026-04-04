@@ -4,6 +4,7 @@ import email
 import email.policy
 import logging
 import math
+import tempfile
 import threading
 from pathlib import Path
 from typing import Callable
@@ -117,7 +118,7 @@ class DocumentProcessor:
         elif not is_pdf:
             # TXT / EML / MSG: always read directly, OCR flag is irrelevant
             try:
-                ocr_result = self._read_text_file(pdf_path)
+                ocr_result = self._read_text_file(pdf_path, cancel_event)
             except Exception as e:
                 self.emit(ErrorEvent(
                     error_message=f"Errore lettura file: {e}",
@@ -525,17 +526,17 @@ class DocumentProcessor:
         """Callback from LegalExtractor as batches of chunks complete."""
         self.emit(ExtractionProgressEvent(**kwargs))
 
-    def _read_text_file(self, file_path: Path):
+    def _read_text_file(self, file_path: Path, cancel_event: threading.Event | None = None):
         """Read text content directly from TXT, EML or MSG files (no OCR needed)."""
         from ocr.ocr_pipeline import OCRResult
 
         suffix = file_path.suffix.lower()
         if suffix == ".eml":
-            text = self._extract_eml_text(file_path)
-            self.emit(LogEvent(message=f"File EML letto direttamente (OCR non necessario)"))
+            text = self._extract_eml_text(file_path, cancel_event)
+            self.emit(LogEvent(message="File EML letto direttamente (OCR non necessario)"))
         elif suffix == ".msg":
-            text = self._extract_msg_text(file_path)
-            self.emit(LogEvent(message=f"File MSG letto direttamente (OCR non necessario)"))
+            text = self._extract_msg_text(file_path, cancel_event)
+            self.emit(LogEvent(message="File MSG letto direttamente (OCR non necessario)"))
         elif suffix == ".docx":
             text = self._extract_docx_text(file_path)
             self.emit(LogEvent(message=f"File DOCX letto direttamente (OCR non necessario)"))
@@ -559,9 +560,10 @@ class DocumentProcessor:
             successful_pages=1,
         )
 
-    @staticmethod
-    def _extract_eml_text(file_path: Path) -> str:
-        """Extract plain-text content from an EML file, including key headers."""
+    def _extract_eml_text(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> str:
+        """Extract text from an EML file, including headers, body and OCR of attachments."""
         msg = email.message_from_bytes(
             file_path.read_bytes(),
             policy=email.policy.default,
@@ -569,7 +571,7 @@ class DocumentProcessor:
 
         parts = []
 
-        # Include relevant headers
+        # Headers
         for header in ("date", "from", "to", "cc", "subject"):
             value = msg.get(header, "").strip()
             if value:
@@ -577,9 +579,12 @@ class DocumentProcessor:
         if parts:
             parts.append("")
 
-        # Walk MIME parts and collect text/plain bodies
+        # Body (only non-attachment text/plain parts)
         for part in msg.walk():
-            if part.get_content_type() == "text/plain":
+            if (
+                part.get_content_type() == "text/plain"
+                and part.get_content_disposition() != "attachment"
+            ):
                 try:
                     body = part.get_content()
                     if body and body.strip():
@@ -587,14 +592,44 @@ class DocumentProcessor:
                 except Exception:
                     pass
 
+        # Collect attachments
+        att_list: list[tuple[str, bytes]] = []
+        for part in msg.walk():
+            if part.get_content_disposition() == "attachment":
+                raw_name = part.get_filename() or f"allegato_{len(att_list) + 1}"
+                payload = part.get_payload(decode=True)
+                if payload:
+                    att_list.append((raw_name, payload))
+
+        if att_list:
+            names = ", ".join(n for n, _ in att_list)
+            self.emit(LogEvent(
+                message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
+            ))
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for i, (name, data) in enumerate(att_list, 1):
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    att_path = Path(tmpdir) / name
+                    att_path.write_bytes(data)
+                    self.emit(LogEvent(
+                        message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
+                    ))
+                    att_text = self._process_attachment(att_path, cancel_event)
+                    if att_text:
+                        parts.append(f"\n\n--- ALLEGATO {i}: {name} ---\n\n")
+                        parts.append(att_text)
+
         return "\n".join(parts)
 
-    @staticmethod
-    def _extract_msg_text(file_path: Path) -> str:
-        """Extract plain-text content from an Outlook MSG file, including key headers."""
+    def _extract_msg_text(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> str:
+        """Extract text from an Outlook MSG file, including headers, body and OCR of attachments."""
         import extract_msg
 
         parts = []
+        att_list: list[tuple[str, bytes]] = []
 
         with extract_msg.openMsg(file_path) as msg:
             header_map = [
@@ -614,7 +649,84 @@ class DocumentProcessor:
             if body and body.strip():
                 parts.append(body)
 
+            for attachment in msg.attachments:
+                name = (
+                    getattr(attachment, "longFilename", None)
+                    or getattr(attachment, "shortFilename", None)
+                    or f"allegato_{len(att_list) + 1}"
+                )
+                data = getattr(attachment, "data", None)
+                if data:
+                    att_list.append((name, data))
+
+        if att_list:
+            names = ", ".join(n for n, _ in att_list)
+            self.emit(LogEvent(
+                message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
+            ))
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for i, (name, data) in enumerate(att_list, 1):
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    att_path = Path(tmpdir) / name
+                    att_path.write_bytes(data)
+                    self.emit(LogEvent(
+                        message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
+                    ))
+                    att_text = self._process_attachment(att_path, cancel_event)
+                    if att_text:
+                        parts.append(f"\n\n--- ALLEGATO {i}: {name} ---\n\n")
+                        parts.append(att_text)
+
         return "\n".join(parts)
+
+    def _process_attachment(
+        self, att_path: Path, cancel_event: threading.Event | None = None
+    ) -> str:
+        """Process a single attachment and return its text content.
+
+        PDFs and images go through OCR; other supported formats are read directly.
+        Unsupported types are skipped with a warning.
+        """
+        _cancel = cancel_event or threading.Event()
+        suffix = att_path.suffix.lower()
+        try:
+            if suffix == ".pdf":
+                result = self.ocr_pipeline.process_pdf(
+                    pdf_path=att_path,
+                    on_page_complete=self._on_ocr_page,
+                    on_page_skipped=self._on_page_skipped,
+                    on_page_native_text=self._on_page_native_text,
+                    cancel_event=_cancel,
+                )
+                return result.combined_text
+            elif suffix in IMAGE_EXTENSIONS:
+                result = self.ocr_pipeline.ocr_single_image(
+                    image_path=att_path,
+                    on_page_complete=self._on_ocr_page,
+                    cancel_event=_cancel,
+                )
+                return result.combined_text
+            elif suffix == ".docx":
+                return self._extract_docx_text(att_path)
+            elif suffix in (".html", ".htm"):
+                return self._extract_html_text(att_path)
+            elif suffix == ".rtf":
+                return self._extract_rtf_text(att_path)
+            elif suffix in (".txt", ".md"):
+                return att_path.read_text(encoding="utf-8", errors="replace")
+            else:
+                self.emit(LogEvent(
+                    message=f"Allegato '{att_path.name}' ({suffix}) non supportato - saltato",
+                    level="WARNING",
+                ))
+                return ""
+        except Exception as e:
+            self.emit(LogEvent(
+                message=f"Errore elaborazione allegato '{att_path.name}': {e}",
+                level="ERROR",
+            ))
+            return ""
 
     @staticmethod
     def _extract_docx_text(file_path: Path) -> str:

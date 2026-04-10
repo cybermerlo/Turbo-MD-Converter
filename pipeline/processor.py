@@ -137,7 +137,7 @@ class DocumentProcessor:
                 return False, cost_info
 
             self.cost_tracker.add_call(
-                model_id="voxtral-small-latest",
+                model_id=self.audio_transcriber.model_id,
                 input_tokens=trans_result["input_tokens"],
                 output_tokens=trans_result["output_tokens"],
                 phase="transcription",

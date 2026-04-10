@@ -52,6 +52,8 @@ Testo OCR:
 
 # Available audio transcription models
 AVAILABLE_AUDIO_MODELS = [
+    "voxtral-mini-2602",
+    "voxtral-mini-latest",
     "voxtral-small-latest",
 ]
 
@@ -78,6 +80,14 @@ PRICING = {
     "gemini-2.5-flash": {
         "input_per_1m": 0.15,
         "output_per_1m": 0.60,
+    },
+    "voxtral-mini-2602": {
+        "input_per_1m": 0.10,
+        "output_per_1m": 0.30,
+    },
+    "voxtral-mini-latest": {
+        "input_per_1m": 0.10,
+        "output_per_1m": 0.30,
     },
     "voxtral-small-latest": {
         "input_per_1m": 0.10,

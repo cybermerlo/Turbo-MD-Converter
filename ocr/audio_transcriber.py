@@ -1,6 +1,5 @@
-"""Audio transcription via Mistral Voxtral Small (chat completions with audio input)."""
+"""Audio transcription via Mistral Voxtral Mini Transcribe V2."""
 
-import base64
 import logging
 import time
 from pathlib import Path
@@ -22,6 +21,37 @@ AUDIO_MIME_TYPES: dict[str, str] = {
 class AudioTranscriberError(Exception):
     """Raised when audio transcription fails."""
     pass
+
+
+def _format_timestamp(seconds: float) -> str:
+    """Formatta secondi in mm:ss (o hh:mm:ss)."""
+    total = max(0, int(seconds))
+    minutes, secs = divmod(total, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _build_diarized_text(response) -> str:
+    """Crea un testo leggibile con speaker e timestamp per segmento."""
+    segments = getattr(response, "segments", None) or []
+    if not segments:
+        return getattr(response, "text", "") or ""
+
+    lines: list[str] = []
+    for seg in segments:
+        text = (getattr(seg, "text", "") or "").strip()
+        if not text:
+            continue
+        speaker = getattr(seg, "speaker_id", None) or "speaker_sconosciuto"
+        start = float(getattr(seg, "start", 0.0) or 0.0)
+        end = float(getattr(seg, "end", 0.0) or 0.0)
+        lines.append(
+            f"[{_format_timestamp(start)}-{_format_timestamp(end)}] {speaker}: {text}"
+        )
+
+    return "\n".join(lines) if lines else (getattr(response, "text", "") or "")
 
 
 def _is_rate_limit(exc: Exception) -> bool:
@@ -47,12 +77,12 @@ def _retry_after_seconds(exc: Exception) -> float | None:
 
 
 class AudioTranscriber:
-    """Transcribes audio files using Mistral Voxtral Small via chat completions."""
+    """Transcribes audio files using Mistral Voxtral Mini Transcribe V2."""
 
     def __init__(
         self,
         api_key: str,
-        model_id: str = "voxtral-small-latest",
+        model_id: str = "voxtral-mini-2602",
         transcription_prompt: str = DEFAULT_TRANSCRIPTION_PROMPT,
     ):
         from mistralai.client import Mistral
@@ -72,10 +102,11 @@ class AudioTranscriber:
         )
         self.client = Mistral(api_key=api_key, retry_config=sdk_retry)
         self.model_id = model_id
+        # Manteniamo il campo per compatibilità col config preesistente.
         self.transcription_prompt = transcription_prompt
 
     def transcribe(self, audio_path: Path) -> dict:
-        """Transcribe an audio file via Voxtral Small.
+        """Transcribe an audio file via Voxtral Mini Transcribe V2.
 
         Args:
             audio_path: Path to the audio file (MP3, WAV, FLAC, M4A, OGG).
@@ -102,32 +133,25 @@ class AudioTranscriber:
             audio_path.name, self.model_id,
         )
 
-        audio_bytes = audio_path.read_bytes()
-        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
-
         def do_transcribe():
-            # Audio lunghi: il default SDK è 30s e può interrompere la richiesta.
-            response = self.client.chat.complete(
-                model=self.model_id,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
-                            "input_audio": audio_base64,
-                        },
-                        {
-                            "type": "text",
-                            "text": self.transcription_prompt,
-                        },
-                    ],
-                }],
-                timeout_ms=600_000,
-            )
+            # Endpoint di trascrizione batch con diarization, ottimizzato per audio lunghi.
+            with audio_path.open("rb") as audio_file:
+                response = self.client.audio.transcriptions.complete(
+                    model=self.model_id,
+                    file={
+                        "content": audio_file,
+                        "file_name": audio_path.name,
+                        "content_type": AUDIO_MIME_TYPES[suffix],
+                    },
+                    diarize=True,
+                    timestamp_granularities=["segment"],
+                    timeout_ms=600_000,
+                )
 
-            text = response.choices[0].message.content or ""
-            input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-            output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+            text = _build_diarized_text(response)
+            usage = getattr(response, "usage", None)
+            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            output_tokens = getattr(usage, "completion_tokens", 0) or 0
             return {
                 "text": text,
                 "input_tokens": input_tokens,

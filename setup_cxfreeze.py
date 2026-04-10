@@ -26,6 +26,8 @@ build_exe_options = {
         "langextract",
         "google",
         "google.genai",
+        "opentelemetry",
+        "opentelemetry.context",
         "fitz",          # PyMuPDF
         "PIL",
         "PIL._tkinter_finder",
@@ -40,6 +42,10 @@ build_exe_options = {
         "pipeline",
         "output",
         "utils",
+    ],
+    # Include esplicito per import dinamico usato da opentelemetry context loader.
+    "includes": [
+        "opentelemetry.context.contextvars_context",
     ],
     "include_files": [
         # Icone / loghi

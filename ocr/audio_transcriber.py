@@ -26,8 +26,24 @@ class AudioTranscriberError(Exception):
 
 def _is_rate_limit(exc: Exception) -> bool:
     """Return True if the exception is an HTTP 429 rate-limit response."""
+    if getattr(exc, "status_code", None) == 429:
+        return True
     msg = str(exc).lower()
     return "429" in msg or "rate_limit" in msg or "rate limit" in msg
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Retry-After dall'errore Mistral (SDKError espone .headers)."""
+    headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return None
 
 
 class AudioTranscriber:
@@ -40,7 +56,21 @@ class AudioTranscriber:
         transcription_prompt: str = DEFAULT_TRANSCRIPTION_PROMPT,
     ):
         from mistralai.client import Mistral
-        self.client = Mistral(api_key=api_key)
+        from mistralai.client.utils import BackoffStrategy, RetryConfig
+
+        # Senza retry_config l'SDK non ritenta i 429: una sola richiesta e stop.
+        backoff = BackoffStrategy(
+            initial_interval=1_000,
+            max_interval=120_000,
+            exponent=1.5,
+            max_elapsed_time=600_000,
+        )
+        sdk_retry = RetryConfig(
+            strategy="backoff",
+            backoff=backoff,
+            retry_connection_errors=True,
+        )
+        self.client = Mistral(api_key=api_key, retry_config=sdk_retry)
         self.model_id = model_id
         self.transcription_prompt = transcription_prompt
 
@@ -76,33 +106,24 @@ class AudioTranscriber:
         audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
 
         def do_transcribe():
-            try:
-                response = self.client.chat.complete(
-                    model=self.model_id,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_audio",
-                                "input_audio": audio_base64,
-                            },
-                            {
-                                "type": "text",
-                                "text": self.transcription_prompt,
-                            },
-                        ],
-                    }],
-                )
-            except Exception as api_exc:
-                # 429 Rate Limit: non ha senso ritentare subito, rilancia
-                # direttamente come AudioTranscriberError non-retryable
-                if _is_rate_limit(api_exc):
-                    raise AudioTranscriberError(
-                        "Quota API Mistral esaurita (HTTP 429). "
-                        "Verifica il tuo piano su console.mistral.ai → "
-                        "aggiungi un metodo di pagamento per sbloccare l'accesso."
-                    ) from api_exc
-                raise
+            # Audio lunghi: il default SDK è 30s e può interrompere la richiesta.
+            response = self.client.chat.complete(
+                model=self.model_id,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": audio_base64,
+                        },
+                        {
+                            "type": "text",
+                            "text": self.transcription_prompt,
+                        },
+                    ],
+                }],
+                timeout_ms=600_000,
+            )
 
             text = response.choices[0].message.content or ""
             input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
@@ -114,7 +135,8 @@ class AudioTranscriber:
             }
 
         last_exc: Exception | None = None
-        for attempt in range(4):  # tentativo 0 + max 3 retry
+        max_attempts = 6
+        for attempt in range(max_attempts):
             try:
                 result = do_transcribe()
                 logger.info(
@@ -124,16 +146,19 @@ class AudioTranscriber:
                 )
                 return result
             except AudioTranscriberError:
-                # 429 e altri errori non recuperabili → fallisce subito
                 raise
             except Exception as e:
                 last_exc = e
-                if attempt == 3:
+                if attempt == max_attempts - 1:
                     break
-                wait = min(2.0 * (2 ** attempt), 30.0)
+                ra = _retry_after_seconds(e)
+                if _is_rate_limit(e):
+                    wait = ra if ra is not None else min(90.0, 10.0 * (1.6**attempt))
+                else:
+                    wait = ra if ra is not None else min(30.0, 2.0 * (2**attempt))
                 logger.warning(
-                    "Retry %d/3 trascrizione '%s': %s",
-                    attempt + 1, audio_path.name, e,
+                    "Retry %d/%d trascrizione '%s' (attesa %.1fs): %s",
+                    attempt + 1, max_attempts - 1, audio_path.name, wait, e,
                 )
                 time.sleep(wait)
 

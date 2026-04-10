@@ -16,6 +16,7 @@ import argparse
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,38 @@ def _load_build_info() -> dict:
     return {"date": "", "build_num": 0}
 
 
+def _write_version_file(version: str, build_date: str, build_num: int) -> None:
+    """Scrive version.py con la versione fornita."""
+    try:
+        year_s, month_s, day_s, _ = version.split(".")
+        year, month, day = int(year_s), int(month_s), int(day_s)
+    except (ValueError, AttributeError):
+        print(f"[version] Formato versione non valido: {version}")
+        sys.exit(1)
+
+    version_py_content = dedent(f"""\
+        # -*- coding: utf-8 -*-
+        \"\"\"
+        Versione centralizzata dell'applicazione.
+        Aggiornato automaticamente da build_installer.py – NON modificare manualmente VERSION.
+        \"\"\"
+
+        APP_NAME        = "{APP_NAME}"
+        APP_EXE_NAME    = "{APP_EXE_NAME}"
+        APP_PUBLISHER   = "{APP_PUBLISHER}"
+        APP_URL         = "{APP_URL}"
+
+        # Formato: ANNO.MESE.GIORNO.NUMEROBUILD  (es. 2026.04.02.3)
+        VERSION         = "{version}"
+        BUILD_DATE      = "{build_date}"
+        BUILD_NUM       = {build_num}
+
+        # Tupla per cx_Freeze / metadata exe
+        VERSION_TUPLE   = ({year}, {month}, {day}, {build_num})
+    """)
+    VERSION_PY.write_text(version_py_content, encoding="utf-8")
+
+
 def bump_version() -> str:
     """Calcola la nuova versione e aggiorna build_info.json + version.py.
 
@@ -84,31 +117,26 @@ def bump_version() -> str:
         encoding="utf-8",
     )
 
-    # Aggiorna version.py
-    year, month, day = today.year, today.month, today.day
-    version_py_content = dedent(f"""\
-        # -*- coding: utf-8 -*-
-        \"\"\"
-        Versione centralizzata dell'applicazione.
-        Aggiornato automaticamente da build_installer.py – NON modificare manualmente VERSION.
-        \"\"\"
-
-        APP_NAME        = "{APP_NAME}"
-        APP_EXE_NAME    = "{APP_EXE_NAME}"
-        APP_PUBLISHER   = "{APP_PUBLISHER}"
-        APP_URL         = "{APP_URL}"
-
-        # Formato: ANNO.MESE.GIORNO.NUMEROBUILD  (es. 2026.04.02.3)
-        VERSION         = "{version}"
-        BUILD_DATE      = "{today_str}"
-        BUILD_NUM       = {build_num}
-
-        # Tupla per cx_Freeze / metadata exe
-        VERSION_TUPLE   = ({year}, {month}, {day}, {build_num})
-    """)
-    VERSION_PY.write_text(version_py_content, encoding="utf-8")
+    _write_version_file(version=version, build_date=today_str, build_num=build_num)
 
     print(f"[version]  {version}  (build #{build_num} del {today_str})")
+    return version
+
+
+def use_explicit_version(version: str) -> str:
+    """Usa una versione esplicita (es. da tag Git) senza calcolo incrementale."""
+    if not re.fullmatch(r"\d{4}\.\d{2}\.\d{2}\.\d+", version):
+        print(
+            f"[version] Formato non valido '{version}'. Atteso: YYYY.MM.DD.N "
+            f"(es. 2026.04.10.2)"
+        )
+        sys.exit(1)
+
+    year_s, month_s, day_s, build_s = version.split(".")
+    build_date = f"{year_s}-{month_s}-{day_s}"
+    build_num = int(build_s)
+    _write_version_file(version=version, build_date=build_date, build_num=build_num)
+    print(f"[version]  {version}  (forzata da input)")
     return version
 
 
@@ -237,6 +265,12 @@ def main():
         action="store_true",
         help="Salta cx_Freeze, usa la build esistente e genera solo l'installer",
     )
+    parser.add_argument(
+        "--version",
+        type=str,
+        default="",
+        help="Versione esplicita da usare (formato YYYY.MM.DD.N), tipicamente da tag",
+    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -244,7 +278,7 @@ def main():
     print("=" * 60)
 
     # Step 1: versione
-    version = bump_version()
+    version = use_explicit_version(args.version) if args.version else bump_version()
 
     if args.version_only:
         print("\n[build]  Fatto (solo versione aggiornata).")

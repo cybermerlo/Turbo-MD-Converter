@@ -37,7 +37,13 @@ jobs:
       - name: Build installer
         env:
           PYTHONIOENCODING: utf-8
-        run: python build_installer.py
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            python build_installer.py --version "$VERSION"
+          else
+            python build_installer.py
+          fi
 
       - name: Find installer path
         id: installer

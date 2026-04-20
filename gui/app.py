@@ -32,6 +32,7 @@ from pipeline.events import (
     PipelineEvent,
 )
 from pipeline.worker import PipelineWorker
+from version import VERSION
 
 _FONT_BOLD = ("", 13, "bold")
 
@@ -61,6 +62,12 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config = config
         self.gui_queue: queue.Queue[PipelineEvent] = queue.Queue()
         self.worker: PipelineWorker | None = None
+
+        self._batch_total: int = 0
+        self._batch_done: int = 0
+        self._base_cost: float = 0.0       # cost of fully-completed files
+        self._current_ocr_cost: float = 0.0  # running OCR cost for file in progress
+        self._converted_mds: dict[Path, Path] = {}  # input_path → .md output path
 
         self._build_layout()
         self._setup_drag_drop()
@@ -97,10 +104,23 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             font=ctk.CTkFont(size=20, weight="bold"),
         ).pack(side="left")
 
+        ctk.CTkLabel(
+            top_bar,
+            text=f"v{VERSION}",
+            font=ctk.CTkFont(size=11),
+            text_color="gray60",
+        ).pack(side="left", padx=(10, 0), pady=8)
+
         ctk.CTkButton(
             top_bar, text="Impostazioni", width=110,
             command=self._open_settings,
         ).pack(side="right", pady=8)
+
+        ctk.CTkButton(
+            top_bar, text="Aggiornamenti", width=110,
+            fg_color="transparent", border_width=1,
+            command=self._open_update_dialog,
+        ).pack(side="right", pady=8, padx=(0, 8))
 
         # ── Two-column content ────────────────────────────────────────────────
         content = ctk.CTkFrame(self, fg_color="transparent")
@@ -331,26 +351,20 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _handle_event(self, event: PipelineEvent) -> None:
         """Route pipeline events to the appropriate UI components."""
         if isinstance(event, OCRProgressEvent):
-            self.progress_frame.update_ocr(
-                event.page_num, event.total_pages, event.success,
-            )
-            total_tokens = event.input_tokens + event.output_tokens
-            self.progress_frame.update_cost(total_tokens, event.page_cost)
+            if event.page_num == 0:
+                self._current_ocr_cost = event.page_cost
+            else:
+                self._current_ocr_cost += event.page_cost
+            self.progress_frame.update_cost(self._base_cost + self._current_ocr_cost)
 
         elif isinstance(event, ExtractionStartEvent):
-            self.progress_frame.update_extraction_start(
-                event.total_text_length, event.schema_name,
-            )
+            pass  # no progress-frame update needed
 
         elif isinstance(event, ExtractionProgressEvent):
-            self.progress_frame.update_extraction_progress(
-                event.chunks_done, event.total_chunks,
-                event.chars_processed, event.total_chars,
-                event.pass_num, event.total_passes,
-            )
+            pass  # no progress-frame update needed
 
         elif isinstance(event, ExtractionCompleteEvent):
-            self.progress_frame.update_extraction_complete(event.extraction_count)
+            pass  # no progress-frame update needed
 
         elif isinstance(event, PageNativeTextEvent):
             self.log_frame.append(
@@ -383,11 +397,18 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                         pass
 
         elif isinstance(event, PipelineCompleteEvent):
-            if event.success:
-                cost = event.cost_info.get("total", {})
-                total_tok = cost.get("input_tokens", 0) + cost.get("output_tokens", 0)
-                self.progress_frame.update_cost(total_tok, cost.get("cost_usd", 0))
-                self.progress_frame.update_cost_breakdown(event.cost_info)
+            file_cost = event.cost_info.get("total", {}).get("cost_usd", 0.0)
+            self._base_cost += file_cost
+            self._current_ocr_cost = 0.0
+            self._batch_done += 1
+            self.progress_frame.update_files(
+                self._batch_done, self._batch_total, self._base_cost,
+            )
+            if event.pdf_path and event.success:
+                md_files = [f for f in event.output_files if f.suffix == ".md"]
+                if md_files:
+                    self._converted_mds[event.pdf_path] = md_files[0]
+                    self.input_frame.set_md_for_file(event.pdf_path, md_files[0])
 
         elif isinstance(event, BatchCompleteEvent):
             self._on_batch_complete(event)
@@ -446,10 +467,18 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.output_mode = self.output_mode_var.get()
         self.config.output_formats = ["markdown"]
 
-        # Reset UI
+        # Reset UI and batch tracking
+        self._batch_total = len(pdf_paths)
+        self._batch_done = 0
+        self._base_cost = 0.0
+        self._current_ocr_cost = 0.0
+        self._converted_mds = {}
+
         self.progress_frame.reset()
+        self.progress_frame.set_batch(self._batch_total)
         self.output_frame.clear()
         self.log_frame.clear()
+        self.input_frame.reset_copy_buttons()
 
         self.input_frame.set_enabled(False)
         self.start_btn.configure(state="disabled")
@@ -482,6 +511,10 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ok = event.successful
         fail = event.failed
         total = event.total_pdfs
+        self.progress_frame.mark_complete(ok, total, self._base_cost, failed=fail)
+        if self._converted_mds:
+            self.output_frame.set_all_mds(list(self._converted_mds.values()))
+
         if fail == 0:
             self.log_frame.append(f"Completato — {ok}/{total} documenti elaborati con successo.")
         else:
@@ -493,6 +526,10 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _open_settings(self) -> None:
         SettingsWindow(self, self.config, self._on_settings_saved)
+
+    def _open_update_dialog(self) -> None:
+        from gui.frames.update_dialog import UpdateDialog
+        UpdateDialog(self)
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         self.config = config

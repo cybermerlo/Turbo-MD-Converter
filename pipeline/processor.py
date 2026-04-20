@@ -39,7 +39,14 @@ from utils.file_renamer import (
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif")
-AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg")
+AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4")
+ARCHIVE_EXTENSIONS = (".zip", ".7z", ".tar", ".tgz")
+
+# All formats that are read directly without OCR (includes archives and P7M)
+_DIRECT_READ_FORMATS = frozenset((
+    ".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf",
+    ".p7m", ".zip", ".7z", ".tar", ".tgz",
+))
 
 
 class DocumentProcessor:
@@ -102,7 +109,14 @@ class DocumentProcessor:
         suffix = pdf_path.suffix.lower()
         is_audio = suffix in AUDIO_EXTENSIONS
         is_image = suffix in IMAGE_EXTENSIONS
-        is_pdf = suffix not in (".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf") and not is_image and not is_audio
+        _name_lower = pdf_path.name.lower()
+        _is_tarball = _name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz"))
+        is_pdf = (
+            suffix not in _DIRECT_READ_FORMATS
+            and not is_image
+            and not is_audio
+            and not _is_tarball
+        )
 
         if is_audio:
             if not self.audio_transcriber:
@@ -120,7 +134,9 @@ class DocumentProcessor:
                 ))
                 return False, cost_info
 
-            self.emit(LogEvent(message=f"Avvio trascrizione audio: {pdf_path.name}"))
+            self.emit(LogEvent(
+                message=f"Avvio trascrizione audio: {pdf_path.name}  [{self.audio_transcriber.model_id}]"
+            ))
             try:
                 from ocr.audio_transcriber import AudioTranscriberError
                 trans_result = self.audio_transcriber.transcribe(pdf_path)
@@ -154,6 +170,9 @@ class DocumentProcessor:
             ))
 
         elif is_image:
+            self.emit(LogEvent(
+                message=f"Avvio OCR immagine: {pdf_path.name}  [{self.config.ocr_model_id}]"
+            ))
             try:
                 ocr_result = self.ocr_pipeline.ocr_single_image(
                     image_path=pdf_path,
@@ -225,6 +244,9 @@ class DocumentProcessor:
 
         else:
             # Normal PDF OCR
+            self.emit(LogEvent(
+                message=f"Avvio OCR PDF: {pdf_path.name}  [{self.config.ocr_model_id}]"
+            ))
             try:
                 ocr_result = self.ocr_pipeline.process_pdf(
                     pdf_path=pdf_path,
@@ -292,12 +314,10 @@ class DocumentProcessor:
             ))
             self.emit(LogEvent(
                 message=(
-                    f"Inizio estrazione strutturata: {text_len:,} caratteri, "
-                    f"~{est_chunks} chunk (buffer={self.config.max_char_buffer}), "
-                    f"modello={self.config.extraction_model_id}, "
-                    f"schema={self.config.active_schema}, "
-                    f"pass={self.config.extraction_passes}, "
-                    f"workers={self.config.max_workers}"
+                    f"Avvio estrazione strutturata  [{self.config.extraction_model_id}]  "
+                    f"schema={self.config.active_schema}  "
+                    f"{text_len:,} car.  ~{est_chunks} chunk  "
+                    f"pass={self.config.extraction_passes}  workers={self.config.max_workers}"
                 )
             ))
 
@@ -600,31 +620,40 @@ class DocumentProcessor:
         )
 
     def _read_text_file(self, file_path: Path, cancel_event: threading.Event | None = None):
-        """Read text content directly from TXT, EML or MSG files (no OCR needed)."""
+        """Read/unpack content directly from text, container and archive files (no OCR)."""
         from ocr.ocr_pipeline import OCRResult
 
         suffix = file_path.suffix.lower()
+        name_lower = file_path.name.lower()
+
         if suffix == ".eml":
             text = self._extract_eml_text(file_path, cancel_event)
-            self.emit(LogEvent(message="File EML letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File EML letto direttamente"))
         elif suffix == ".msg":
             text = self._extract_msg_text(file_path, cancel_event)
-            self.emit(LogEvent(message="File MSG letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File MSG letto direttamente"))
         elif suffix == ".docx":
             text = self._extract_docx_text(file_path)
-            self.emit(LogEvent(message=f"File DOCX letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File DOCX letto direttamente"))
         elif suffix in (".html", ".htm"):
             text = self._extract_html_text(file_path)
-            self.emit(LogEvent(message=f"File HTML letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File HTML letto direttamente"))
         elif suffix == ".rtf":
             text = self._extract_rtf_text(file_path)
-            self.emit(LogEvent(message=f"File RTF letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File RTF letto direttamente"))
         elif suffix == ".md":
             text = file_path.read_text(encoding="utf-8", errors="replace")
-            self.emit(LogEvent(message=f"File MD letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File MD letto direttamente"))
+        elif suffix == ".p7m":
+            self.emit(LogEvent(message=f"Estrazione firma P7M: {file_path.name}"))
+            text = self._extract_p7m_text(file_path, cancel_event)
+        elif suffix in ARCHIVE_EXTENSIONS or name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+            fmt = suffix.lstrip(".").upper() if suffix in ARCHIVE_EXTENSIONS else "TAR"
+            self.emit(LogEvent(message=f"Apertura archivio {fmt}: {file_path.name}"))
+            text = self._extract_archive_text(file_path, cancel_event)
         else:
             text = file_path.read_text(encoding="utf-8", errors="replace")
-            self.emit(LogEvent(message=f"File TXT letto direttamente (OCR non necessario)"))
+            self.emit(LogEvent(message="File TXT letto direttamente"))
 
         return OCRResult(
             pdf_path=file_path,
@@ -753,6 +782,140 @@ class DocumentProcessor:
 
         return "\n".join(parts)
 
+    def _extract_p7m_text(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> str:
+        """Extract the inner payload from a CMS/PKCS#7 signed file (.p7m)."""
+        try:
+            from asn1crypto import cms as asn1_cms
+        except ImportError:
+            raise RuntimeError(
+                "Libreria asn1crypto non trovata. Eseguire: pip install asn1crypto"
+            )
+
+        data = file_path.read_bytes()
+        try:
+            content_info = asn1_cms.ContentInfo.load(data)
+            if content_info["content_type"].native != "signed_data":
+                raise ValueError(
+                    f"Tipo P7M non riconosciuto: {content_info['content_type'].native}"
+                )
+            encap = content_info["content"]["encap_content_info"]
+            inner_bytes = encap["content"].native  # bytes of inner file
+            if not inner_bytes:
+                raise ValueError("P7M senza contenuto (eContent vuoto)")
+        except Exception as e:
+            raise RuntimeError(f"Parsing P7M '{file_path.name}' fallito: {e}") from e
+
+        # Detect inner type: "documento.pdf.p7m" → stem="documento.pdf" → suffix=".pdf"
+        inner_name = file_path.stem        # e.g. "documento.pdf"
+        inner_suffix = Path(inner_name).suffix.lower()
+
+        # Magic-byte fallback if the inner name has no useful extension
+        if not inner_suffix or inner_suffix == file_path.suffix.lower():
+            if inner_bytes[:4] == b"%PDF":
+                inner_suffix = ".pdf"
+            elif inner_bytes[:2] == b"PK":
+                inner_suffix = ".zip"
+            elif inner_bytes[:5] == b"<?xml":
+                inner_suffix = ".xml"
+            else:
+                inner_suffix = ".bin"
+            inner_name = file_path.stem + inner_suffix
+
+        self.emit(LogEvent(
+            message=(
+                f"P7M estratto: {inner_name}  "
+                f"({len(inner_bytes):,} byte)"
+            )
+        ))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inner_path = Path(tmpdir) / inner_name
+            inner_path.write_bytes(inner_bytes)
+            return self._process_attachment(inner_path, cancel_event)
+
+    def _extract_archive_text(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> str:
+        """Extract and process all files inside a ZIP, 7Z or TAR archive."""
+        import zipfile
+        import tarfile as tarfile_mod
+
+        suffix = file_path.suffix.lower()
+        name_lower = file_path.name.lower()
+
+        members: list[tuple[str, bytes]] = []  # (member name, raw bytes)
+
+        try:
+            if suffix == ".zip":
+                with zipfile.ZipFile(file_path) as zf:
+                    for info in zf.infolist():
+                        if info.is_dir():
+                            continue
+                        members.append((info.filename, zf.read(info.filename)))
+
+            elif suffix == ".7z":
+                import py7zr
+                with py7zr.SevenZipFile(file_path, mode="r") as zf:
+                    for name, bio in zf.read().items():
+                        members.append((name, bio.read()))
+
+            elif suffix in (".tar", ".tgz") or name_lower.endswith(
+                (".tar.gz", ".tar.bz2", ".tar.xz")
+            ):
+                with tarfile_mod.open(file_path) as tf:
+                    for member in tf.getmembers():
+                        if not member.isfile():
+                            continue
+                        fobj = tf.extractfile(member)
+                        if fobj:
+                            members.append((member.name, fobj.read()))
+
+        except Exception as e:
+            raise RuntimeError(
+                f"Impossibile aprire l'archivio '{file_path.name}': {e}"
+            ) from e
+
+        if not members:
+            self.emit(LogEvent(
+                message=f"Archivio '{file_path.name}' vuoto o senza file supportati",
+                level="WARNING",
+            ))
+            return ""
+
+        # Filter out hidden/system entries
+        members = [
+            (n, d) for n, d in members
+            if not Path(n).name.startswith((".", "__", "~"))
+        ]
+
+        self.emit(LogEvent(
+            message=f"Archivio '{file_path.name}': {len(members)} file da elaborare"
+        ))
+
+        parts: list[str] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            for i, (name, data) in enumerate(members, 1):
+                if cancel_event and cancel_event.is_set():
+                    break
+                base = Path(name).name
+                dest = tmp / base
+                # Avoid collisions
+                if dest.exists():
+                    dest = tmp / f"{i}_{base}"
+                dest.write_bytes(data)
+                self.emit(LogEvent(
+                    message=f"Elaborazione {i}/{len(members)} da archivio: {name}"
+                ))
+                text = self._process_attachment(dest, cancel_event)
+                if text:
+                    parts.append(f"\n\n--- FILE {i}: {name} ---\n\n")
+                    parts.append(text)
+
+        return "\n".join(parts)
+
     def _process_attachment(
         self, att_path: Path, cancel_event: threading.Event | None = None
     ) -> str:
@@ -788,6 +951,10 @@ class DocumentProcessor:
                 return self._extract_rtf_text(att_path)
             elif suffix in (".txt", ".md"):
                 return att_path.read_text(encoding="utf-8", errors="replace")
+            elif suffix == ".p7m":
+                return self._extract_p7m_text(att_path, cancel_event)
+            elif suffix in ARCHIVE_EXTENSIONS or att_path.name.lower().endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+                return self._extract_archive_text(att_path, cancel_event)
             else:
                 self.emit(LogEvent(
                     message=f"Allegato '{att_path.name}' ({suffix}) non supportato - saltato",

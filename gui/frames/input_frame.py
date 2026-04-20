@@ -8,7 +8,8 @@ import customtkinter as ctk
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".html", ".htm", ".md", ".rtf",
     ".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif",
-    ".mp3", ".wav", ".flac", ".m4a", ".ogg",
+    ".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4",
+    ".p7m", ".zip", ".7z", ".tar", ".tgz",
 )
 
 _EXT_ICON = {
@@ -34,7 +35,72 @@ _EXT_ICON = {
     ".flac": "AUD",
     ".m4a": "AUD",
     ".ogg": "AUD",
+    ".mp4": "MP4",
+    ".p7m": "P7M",
+    ".zip": "ZIP",
+    ".7z":  "7Z",
+    ".tar": "TAR",
+    ".tgz": "TAR",
 }
+
+
+class _FileRow(ctk.CTkFrame):
+    """Single row in the file list: badge + name + optional copy button."""
+
+    def __init__(self, parent: ctk.CTkScrollableFrame, path: Path):
+        super().__init__(parent, fg_color="transparent", corner_radius=0)
+        self.pack(fill="x", padx=2, pady=1)
+
+        self._path = path
+        self._md_path: Path | None = None
+
+        tag = _EXT_ICON.get(path.suffix.lower(), "???")
+
+        # Copy button (right side, hidden until MD is ready)
+        self._copy_btn = ctk.CTkButton(
+            self,
+            text="⎘",
+            width=26,
+            height=20,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent",
+            border_width=1,
+            border_color="gray40",
+            hover_color=("gray80", "gray30"),
+            state="disabled",
+            command=self._copy_to_clipboard,
+        )
+        self._copy_btn.pack(side="right", padx=(4, 2), pady=2)
+
+        # File label
+        ctk.CTkLabel(
+            self,
+            text=f"[{tag}]  {path.name}",
+            font=ctk.CTkFont(family="Consolas", size=11),
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True, padx=(4, 0), pady=2)
+
+    def enable_copy(self, md_path: Path) -> None:
+        self._md_path = md_path
+        self._copy_btn.configure(
+            state="normal",
+            border_color=("gray50", "gray60"),
+        )
+
+    def disable_copy(self) -> None:
+        self._md_path = None
+        self._copy_btn.configure(state="disabled", border_color="gray40")
+
+    def _copy_to_clipboard(self) -> None:
+        if not self._md_path or not self._md_path.exists():
+            return
+        try:
+            content = self._md_path.read_text(encoding="utf-8")
+            root = self.winfo_toplevel()
+            root.clipboard_clear()
+            root.clipboard_append(content)
+        except Exception:
+            pass
 
 
 class InputFrame(ctk.CTkFrame):
@@ -44,6 +110,7 @@ class InputFrame(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         self.on_files_changed = on_files_changed
         self._file_paths: list[Path] = []
+        self._rows: dict[Path, _FileRow] = {}
 
         # ── Header ───────────────────────────────────────────────────────────
         ctk.CTkLabel(
@@ -90,13 +157,14 @@ class InputFrame(ctk.CTkFrame):
         )
         self.clear_btn.pack(side="right")
 
-        # ── File list ─────────────────────────────────────────────────────────
-        self.file_list = ctk.CTkTextbox(
+        # ── File list (scrollable rows) ───────────────────────────────────────
+        self.file_list = ctk.CTkScrollableFrame(
             self,
-            font=ctk.CTkFont(family="Consolas", size=11),
+            fg_color=("gray92", "gray14"),
+            corner_radius=6,
+            scrollbar_button_color=("gray70", "gray35"),
         )
         self.file_list.pack(padx=12, pady=(0, 4), fill="both", expand=True)
-        self.file_list.configure(state="disabled")
 
         # ── Count ─────────────────────────────────────────────────────────────
         self.count_label = ctk.CTkLabel(
@@ -112,12 +180,13 @@ class InputFrame(ctk.CTkFrame):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.html *.htm *.md *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif *.mp3 *.wav *.flac *.m4a *.ogg"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.html *.htm *.md *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif *.mp3 *.wav *.flac *.m4a *.ogg *.mp4 *.p7m *.zip *.7z *.tar *.tgz"),
                 ("PDF", "*.pdf"),
                 ("Immagini", "*.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("Testo ed Email", "*.txt *.eml *.msg *.md *.html *.htm *.rtf"),
                 ("Office/RTF", "*.docx *.rtf"),
-                ("Audio", "*.mp3 *.wav *.flac *.m4a *.ogg"),
+                ("Audio / Video", "*.mp3 *.wav *.flac *.m4a *.ogg *.mp4"),
+                ("Firmati e Archivi", "*.p7m *.zip *.7z *.tar *.tgz"),
                 ("Tutti i file", "*.*"),
             ],
         )
@@ -145,12 +214,14 @@ class InputFrame(ctk.CTkFrame):
         self._refresh_list()
 
     def _refresh_list(self) -> None:
-        self.file_list.configure(state="normal")
-        self.file_list.delete("1.0", "end")
-        for i, path in enumerate(self._file_paths):
-            tag = _EXT_ICON.get(path.suffix.lower(), "???")
-            self.file_list.insert("end", f"[{tag}]  {path.name}\n")
-        self.file_list.configure(state="disabled")
+        # Destroy all existing row widgets
+        for widget in self.file_list.winfo_children():
+            widget.destroy()
+        self._rows.clear()
+
+        for path in self._file_paths:
+            row = _FileRow(self.file_list, path)
+            self._rows[path] = row
 
         n = len(self._file_paths)
         if n == 0:
@@ -169,24 +240,22 @@ class InputFrame(ctk.CTkFrame):
             clipboard_text = self.master.clipboard_get()
             if not clipboard_text or not clipboard_text.strip():
                 return
-            
+
             import time
             import tempfile
-            
-            # Crea un file temporaneo con il testo
+
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             temp_dir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
             temp_dir.mkdir(exist_ok=True, parents=True)
-            
+
             temp_file = temp_dir / f"Appunti_{timestamp}.txt"
             temp_file.write_text(clipboard_text, encoding="utf-8")
-            
+
             if temp_file not in self._file_paths:
                 self._file_paths.append(temp_file)
             self._refresh_list()
-            
+
         except Exception:
-            # Nessun testo negli appunti o errore lettura
             pass
 
     # ─── Public API ──────────────────────────────────────────────────────────
@@ -214,3 +283,14 @@ class InputFrame(ctk.CTkFrame):
         self.add_folder_btn.configure(state=state)
         self.paste_text_btn.configure(state=state)
         self.clear_btn.configure(state=state)
+
+    def set_md_for_file(self, input_path: Path, md_path: Path) -> None:
+        """Enable the copy button for a specific input file after conversion."""
+        row = self._rows.get(input_path)
+        if row:
+            row.enable_copy(md_path)
+
+    def reset_copy_buttons(self) -> None:
+        """Disable all per-file copy buttons (call at start of a new batch)."""
+        for row in self._rows.values():
+            row.disable_copy()

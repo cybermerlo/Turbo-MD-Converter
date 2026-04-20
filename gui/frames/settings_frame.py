@@ -161,7 +161,8 @@ class SettingsWindow(ctk.CTkToplevel):
 
         _hint(
             tab,
-            "Chiave API Mistral per la trascrizione di file audio (MP3, WAV, FLAC, M4A, OGG) via Voxtral Small. "
+            "Chiave API Mistral per la trascrizione di file audio/video "
+            "(MP3, WAV, FLAC, M4A, OGG, MP4) via Voxtral. "
             "Ottienila su: console.mistral.ai",
         )
 

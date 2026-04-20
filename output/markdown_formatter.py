@@ -14,14 +14,14 @@ class MarkdownFormatter:
     ) -> str:
         lines: list[str] = []
 
-        lines.append(f"# Analisi Documento: {source_filename}")
+        lines.append(f"# Contenuto del documento: {source_filename}")
         lines.append("")
         lines.append("---")
         lines.append("")
 
         # Structured extractions section (only when schema is active)
         if extractions:
-            lines.append("## Estrazioni Strutturate")
+            lines.append("## Dati strutturati del documento:")
             lines.append("")
             for ext in extractions:
                 cls = ext.get("extraction_class", "N/D")
@@ -37,7 +37,7 @@ class MarkdownFormatter:
 
         # OCR text section
         if ocr_text:
-            lines.append("## Testo OCR Originale")
+            lines.append("## Contenuto del documento originale:")
             lines.append("")
             lines.append(ocr_text)
             lines.append("")

@@ -8,13 +8,14 @@ from config.defaults import DEFAULT_TRANSCRIPTION_PROMPT
 
 logger = logging.getLogger(__name__)
 
-# Supported audio MIME types by extension
+# Supported audio/video MIME types by extension
 AUDIO_MIME_TYPES: dict[str, str] = {
     ".mp3":  "audio/mpeg",
     ".wav":  "audio/wav",
     ".flac": "audio/flac",
     ".m4a":  "audio/mp4",
     ".ogg":  "audio/ogg",
+    ".mp4":  "audio/mp4",
 }
 
 
@@ -106,10 +107,10 @@ class AudioTranscriber:
         self.transcription_prompt = transcription_prompt
 
     def transcribe(self, audio_path: Path) -> dict:
-        """Transcribe an audio file via Voxtral Mini Transcribe V2.
+        """Transcribe an audio or video file via Voxtral Mini Transcribe V2.
 
         Args:
-            audio_path: Path to the audio file (MP3, WAV, FLAC, M4A, OGG).
+            audio_path: Path to the file (MP3, WAV, FLAC, M4A, OGG, MP4).
 
         Returns:
             {
@@ -124,17 +125,16 @@ class AudioTranscriber:
         suffix = audio_path.suffix.lower()
         if suffix not in AUDIO_MIME_TYPES:
             raise AudioTranscriberError(
-                f"Formato audio non supportato: '{suffix}'. "
+                f"Formato non supportato: '{suffix}'. "
                 f"Formati supportati: {', '.join(AUDIO_MIME_TYPES)}"
             )
 
         logger.info(
-            "Avvio trascrizione audio: '%s' (modello=%s)",
+            "Avvio trascrizione: '%s' (modello=%s)",
             audio_path.name, self.model_id,
         )
 
         def do_transcribe():
-            # Endpoint di trascrizione batch con diarization, ottimizzato per audio lunghi.
             with audio_path.open("rb") as audio_file:
                 response = self.client.audio.transcriptions.complete(
                     model=self.model_id,

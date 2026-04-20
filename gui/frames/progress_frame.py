@@ -1,144 +1,145 @@
-"""Progress bars and cost tracking display."""
+"""Overall batch progress and cumulative cost display."""
 
 import customtkinter as ctk
 
-
-def _section_label(parent, text: str) -> ctk.CTkLabel:
-    return ctk.CTkLabel(
-        parent, text=text.upper(),
-        font=ctk.CTkFont(size=10, weight="bold"),
-        text_color="gray60",
-    )
+_GREEN = "#2ecc71"
+_ORANGE = "#e67e22"
 
 
 class ProgressFrame(ctk.CTkFrame):
-    """Shows OCR and extraction progress with cost info."""
+    """Shows overall file-batch progress and running total cost."""
 
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
 
         inner = ctk.CTkFrame(self, fg_color="transparent")
-        inner.pack(padx=12, pady=(10, 10), fill="x")
+        inner.pack(padx=14, pady=(12, 12), fill="x")
 
-        # ── OCR row ──────────────────────────────────────────────────────────
-        ocr_header = ctk.CTkFrame(inner, fg_color="transparent")
-        ocr_header.pack(fill="x", pady=(0, 2))
+        # ── Header row: section label + file count ────────────────────────────
+        header_row = ctk.CTkFrame(inner, fg_color="transparent")
+        header_row.pack(fill="x", pady=(0, 4))
 
-        _section_label(ocr_header, "OCR").pack(side="left")
-        self.ocr_label = ctk.CTkLabel(
-            ocr_header, text="In attesa",
-            font=ctk.CTkFont(size=12),
-            text_color="gray70",
+        self._header_label = ctk.CTkLabel(
+            header_row, text="AVANZAMENTO",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="gray60",
         )
-        self.ocr_label.pack(side="right")
+        self._header_label.pack(side="left")
 
-        self.ocr_progress = ctk.CTkProgressBar(inner)
-        self.ocr_progress.pack(fill="x", pady=(0, 8))
-        self.ocr_progress.set(0)
-
-        # ── Extraction row ───────────────────────────────────────────────────
-        ext_header = ctk.CTkFrame(inner, fg_color="transparent")
-        ext_header.pack(fill="x", pady=(0, 2))
-
-        _section_label(ext_header, "Estrazione").pack(side="left")
-        self.ext_label = ctk.CTkLabel(
-            ext_header, text="In attesa",
-            font=ctk.CTkFont(size=12),
-            text_color="gray70",
+        self._count_label = ctk.CTkLabel(
+            header_row, text="—",
+            font=ctk.CTkFont(size=14, weight="bold"),
         )
-        self.ext_label.pack(side="right")
+        self._count_label.pack(side="right")
 
-        self.ext_progress = ctk.CTkProgressBar(inner)
-        self.ext_progress.pack(fill="x", pady=(0, 8))
-        self.ext_progress.set(0)
+        # ── Progress bar ──────────────────────────────────────────────────────
+        self._progress_bar = ctk.CTkProgressBar(inner, height=18)
+        self._progress_bar.pack(fill="x", pady=(0, 4))
+        self._progress_bar.set(0)
+
+        # ── Status subtitle ───────────────────────────────────────────────────
+        self._status_label = ctk.CTkLabel(
+            inner, text="In attesa",
+            font=ctk.CTkFont(size=11),
+            text_color="gray55",
+        )
+        self._status_label.pack(anchor="w", pady=(0, 12))
+
+        # ── Divider ───────────────────────────────────────────────────────────
+        ctk.CTkFrame(inner, height=1, fg_color="gray30").pack(fill="x", pady=(0, 10))
 
         # ── Cost row ─────────────────────────────────────────────────────────
         cost_row = ctk.CTkFrame(inner, fg_color="transparent")
         cost_row.pack(fill="x")
 
-        _section_label(cost_row, "Costo").pack(side="left")
-        self.cost_label = ctk.CTkLabel(
-            cost_row, text="$0.0000",
-            font=ctk.CTkFont(size=12),
-        )
-        self.cost_label.pack(side="right")
-
-        self.cost_detail_label = ctk.CTkLabel(
-            inner, text="",
-            font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(
+            cost_row, text="COSTO",
+            font=ctk.CTkFont(size=11, weight="bold"),
             text_color="gray60",
+        ).pack(side="left")
+
+        self._cost_label = ctk.CTkLabel(
+            cost_row, text="$0.0000",
+            font=ctk.CTkFont(size=18, weight="bold"),
         )
-        self.cost_detail_label.pack(anchor="e")
+        self._cost_label.pack(side="right")
 
-    # ─── Update methods ───────────────────────────────────────────────────────
+    # ─── Public API ───────────────────────────────────────────────────────────
 
-    def update_ocr(self, page_num: int, total_pages: int, success: bool) -> None:
-        progress = (page_num + 1) / total_pages if total_pages > 0 else 0
-        self.ocr_progress.set(progress)
-        status = "" if success else " ✗"
-        self.ocr_label.configure(
-            text=f"Pag. {page_num + 1} / {total_pages}{status}",
-            text_color="gray70" if success else "orange",
+    def set_batch(self, total_files: int) -> None:
+        """Called once when a new batch starts."""
+        doc = "documento" if total_files == 1 else "documenti"
+        self._header_label.configure(text="AVANZAMENTO", text_color="gray60")
+        self._count_label.configure(text=f"0 / {total_files}", text_color=("gray10", "gray90"))
+        self._progress_bar.set(0)
+        self._reset_bar_color()
+        self._status_label.configure(
+            text=f"Elaborazione di {total_files} {doc} in corso…",
+            text_color="gray55",
         )
+        self._cost_label.configure(text="$0.0000", text_color=("gray10", "gray90"))
 
-    def update_extraction_start(self, text_length: int, schema: str) -> None:
-        self.ext_label.configure(
-            text=f"Avvio  ·  {text_length:,} car.  ·  {schema}",
-            text_color="gray70",
-        )
-        self.ext_progress.set(0)
+    def update_files(self, done: int, total: int, cost_usd: float) -> None:
+        """Called each time a file completes or cost updates incrementally."""
+        progress = done / total if total > 0 else 0
+        self._progress_bar.set(min(progress, 1.0))
+        self._count_label.configure(text=f"{done} / {total}")
+        remaining = total - done
+        if remaining > 0:
+            rem_word = "rimanente" if remaining == 1 else "rimanenti"
+            self._status_label.configure(
+                text=f"{done} completat{'o' if done == 1 else 'i'}  ·  {remaining} {rem_word}",
+                text_color="gray55",
+            )
+        self._cost_label.configure(text=f"${cost_usd:.4f}")
 
-    def update_extraction_progress(
-        self,
-        chunks_done: int, total_chunks: int,
-        chars_processed: int, total_chars: int,
-        pass_num: int, total_passes: int,
-    ) -> None:
-        progress = chunks_done / total_chunks if total_chunks > 0 else 0
-        if total_passes > 1:
-            pass_weight = 1.0 / total_passes
-            progress = (pass_num - 1) * pass_weight + progress * pass_weight
+    def update_cost(self, cost_usd: float) -> None:
+        """Update cost display incrementally (during processing)."""
+        self._cost_label.configure(text=f"${cost_usd:.4f}")
 
-        self.ext_progress.set(min(progress, 1.0))
+    def mark_complete(self, done: int, total: int, cost_usd: float, failed: int = 0) -> None:
+        """Called when the entire batch finishes — make it graphically evident."""
+        self._progress_bar.set(1.0)
+        all_ok = failed == 0
 
-        if total_passes > 1:
-            self.ext_label.configure(
-                text=f"Chunk {chunks_done}/{total_chunks}  ·  pass {pass_num}/{total_passes}",
-                text_color="gray70",
+        if all_ok:
+            self._progress_bar.configure(progress_color=_GREEN)
+            self._header_label.configure(text="COMPLETATO  ✓", text_color=_GREEN)
+            self._count_label.configure(
+                text=f"{done} / {total}",
+                text_color=_GREEN,
+            )
+            doc = "documento elaborato" if done == 1 else "documenti elaborati"
+            self._status_label.configure(
+                text=f"Tutti i {done} {doc} con successo.",
+                text_color=_GREEN,
             )
         else:
-            self.ext_label.configure(
-                text=f"Chunk {chunks_done} / {total_chunks}  ·  {chars_processed:,} car.",
-                text_color="gray70",
+            self._progress_bar.configure(progress_color=_ORANGE)
+            self._header_label.configure(text="COMPLETATO", text_color=_ORANGE)
+            self._count_label.configure(
+                text=f"{done} / {total}",
+                text_color=_ORANGE,
             )
-
-    def update_extraction_complete(self, count: int) -> None:
-        self.ext_progress.set(1.0)
-        noun = "entità" if count != 1 else "entità"
-        self.ext_label.configure(
-            text=f"Completata  ·  {count} {noun} estratte",
-            text_color="gray70",
-        )
-
-    def update_cost(self, total_tokens: int, cost_usd: float) -> None:
-        tok_str = f"{total_tokens:,}" if total_tokens else "0"
-        self.cost_label.configure(text=f"${cost_usd:.4f}  ·  {tok_str} token")
-
-    def update_cost_breakdown(self, cost_info: dict) -> None:
-        ocr = cost_info.get("ocr", {})
-        ext = cost_info.get("extraction", {})
-        parts = []
-        if ocr.get("cost_usd", 0) > 0:
-            parts.append(f"OCR ${ocr['cost_usd']:.4f}")
-        if ext.get("cost_usd", 0) > 0:
-            parts.append(f"estrazione ~${ext['cost_usd']:.4f}")
-        if parts:
-            self.cost_detail_label.configure(text="  ·  ".join(parts))
+            self._status_label.configure(
+                text=f"{done - failed} riusciti  ·  {failed} errori su {total} file",
+                text_color=_ORANGE,
+            )
+        self._cost_label.configure(text=f"${cost_usd:.4f}")
 
     def reset(self) -> None:
-        self.ocr_progress.set(0)
-        self.ocr_label.configure(text="In attesa", text_color="gray70")
-        self.ext_progress.set(0)
-        self.ext_label.configure(text="In attesa", text_color="gray70")
-        self.cost_label.configure(text="$0.0000")
-        self.cost_detail_label.configure(text="")
+        self._header_label.configure(text="AVANZAMENTO", text_color="gray60")
+        self._count_label.configure(text="—", text_color=("gray10", "gray90"))
+        self._progress_bar.set(0)
+        self._reset_bar_color()
+        self._status_label.configure(text="In attesa", text_color="gray55")
+        self._cost_label.configure(text="$0.0000", text_color=("gray10", "gray90"))
+
+    # ─── Internal ─────────────────────────────────────────────────────────────
+
+    def _reset_bar_color(self) -> None:
+        try:
+            default = ctk.ThemeManager.theme["CTkProgressBar"]["progress_color"]
+            self._progress_bar.configure(progress_color=default)
+        except Exception:
+            pass

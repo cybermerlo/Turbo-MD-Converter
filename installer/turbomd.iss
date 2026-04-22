@@ -79,6 +79,9 @@ Name: "{sendto}\Turbo MD Converter";            Filename: "{app}\{#AppExeName}";
 
 ; ── Avvia l'app al termine dell'installazione ─────────────────────────────────
 [Run]
+; Rimuove eventuale "Mark of the Web" (Zone.Identifier) dai file installati.
+; Utile quando il setup proviene da download e Windows/SmartScreen blocca il primo avvio.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -LiteralPath '{app}' -Recurse -File | Unblock-File"""; Flags: runhidden
 Filename: "{app}\{#AppExeName}"; Description: "Avvia Turbo MD Converter"; Flags: nowait postinstall skipifsilent
 
 ; ── Pagina API key e scrittura config ────────────────────────────────────────

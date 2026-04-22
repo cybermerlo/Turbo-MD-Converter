@@ -242,6 +242,43 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.rename_mode_menu.pack(side="right")
 
+        # ── Rename strategy + quick context editor ───────────────────────────
+        strategy_row = ctk.CTkFrame(card, fg_color="transparent")
+        strategy_row.pack(padx=12, pady=(0, 2), fill="x")
+
+        self.rename_batch_context_var = ctk.BooleanVar(
+            value=bool(getattr(self.config, "rename_use_batch_context", False))
+        )
+        self.rename_batch_context_cb = ctk.CTkCheckBox(
+            strategy_row,
+            text="Batch-context",
+            variable=self.rename_batch_context_var,
+            command=self._on_rename_strategy_changed,
+        )
+        self.rename_batch_context_cb.pack(side="left", padx=(0, 10))
+
+        self.rename_strategy_label = ctk.CTkLabel(
+            strategy_row,
+            text=self._get_rename_strategy_label(),
+            font=ctk.CTkFont(size=11),
+            text_color=("gray25", "gray80"),
+            anchor="w",
+        )
+        self.rename_strategy_label.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.rename_context_btn = ctk.CTkButton(
+            strategy_row,
+            text="Contesto rinomina…",
+            width=140,
+            fg_color="transparent",
+            border_width=1,
+            command=self._open_rename_context_dialog,
+        )
+        self.rename_context_btn.pack(side="right")
+
+        # Ensure initial state/label visibility
+        self._refresh_rename_strategy_ui()
+
         # ── Divider ───────────────────────────────────────────────────────────
         ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(8, 4), fill="x")
 
@@ -418,6 +455,14 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 f"Rinominato ({event.file_type.upper()}): "
                 f"{event.original_path.name} → {event.new_path.name}"
             )
+            # If MD files are renamed after PipelineCompleteEvent, keep copy
+            # buttons and "Copia tutti" list aligned with real final paths.
+            if event.file_type == "md" and event.original_path and event.new_path:
+                for input_path, md_path in list(self._converted_mds.items()):
+                    if md_path == event.original_path:
+                        self._converted_mds[input_path] = event.new_path
+                        self.input_frame.set_md_for_file(input_path, event.new_path)
+                        break
 
         elif isinstance(event, ErrorEvent):
             self.log_frame.append(event.error_message, "ERROR")
@@ -544,6 +589,9 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._on_output_mode_changed()
         self._on_rename_changed()
         self._on_phases_changed()
+        if hasattr(self, "rename_batch_context_var"):
+            self.rename_batch_context_var.set(bool(getattr(config, "rename_use_batch_context", False)))
+        self._refresh_rename_strategy_ui()
         save_config(config)
         self.log_frame.append("Impostazioni salvate.")
 
@@ -563,6 +611,101 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         state = "normal" if self.rename_files_var.get() else "disabled"
         self.rename_mode_menu.configure(state=state)
         self._on_phases_changed()
+        self._refresh_rename_strategy_ui()
+
+    def _on_rename_strategy_changed(self) -> None:
+        """Persist rename strategy changes from main UI."""
+        self.config.rename_use_batch_context = bool(self.rename_batch_context_var.get())
+        save_config(self.config)
+        self._refresh_rename_strategy_ui()
+
+    def _refresh_rename_strategy_ui(self) -> None:
+        """Refresh main UI hints/buttons for rename configuration."""
+        if hasattr(self, "rename_strategy_label"):
+            self.rename_strategy_label.configure(text=self._get_rename_strategy_label())
+
+        rename_on = bool(self.rename_files_var.get())
+        if hasattr(self, "rename_context_btn"):
+            self.rename_context_btn.configure(state="normal" if rename_on else "disabled")
+        if hasattr(self, "rename_batch_context_cb"):
+            self.rename_batch_context_cb.configure(state="normal" if rename_on else "disabled")
+
+    def _get_rename_strategy_label(self) -> str:
+        batch_ctx = bool(getattr(self.config, "rename_use_batch_context", False))
+        user_ctx = bool(getattr(self.config, "rename_use_user_context", False))
+        parts = ["Rinomina:"]
+        parts.append("batch-context" if batch_ctx else "classica")
+        if user_ctx:
+            parts.append("(+ contesto utente)")
+        return " ".join(parts)
+
+    def _open_rename_context_dialog(self) -> None:
+        """Small dialog to edit user-provided rename context."""
+        dlg = ctk.CTkToplevel(self)
+        dlg.title("Contesto utente aggiuntivo — Rinomina")
+        dlg.geometry("720x360")
+        dlg.resizable(True, True)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        ctk.CTkLabel(
+            dlg,
+            text="Contesto utente aggiuntivo",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(padx=14, pady=(14, 4), anchor="w")
+
+        ctk.CTkLabel(
+            dlg,
+            text=(
+                "Questo testo viene passato al modello durante la rinomina, sia in modalità classica "
+                "che batch-context. Usalo per indicare come vuoi che i nomi vengano costruiti."
+            ),
+            text_color="gray60",
+            wraplength=680,
+            justify="left",
+            font=ctk.CTkFont(size=11),
+        ).pack(padx=14, pady=(0, 10), anchor="w")
+
+        enabled_var = ctk.BooleanVar(value=bool(getattr(self.config, "rename_use_user_context", False)))
+        cb = ctk.CTkCheckBox(
+            dlg,
+            text="Abilita contesto utente per la rinomina",
+            variable=enabled_var,
+        )
+        cb.pack(padx=14, pady=(0, 6), anchor="w")
+
+        textbox = ctk.CTkTextbox(dlg, height=160, font=ctk.CTkFont(family="Consolas", size=11))
+        textbox.pack(padx=14, pady=(0, 10), fill="both", expand=True)
+        textbox.insert("1.0", getattr(self.config, "rename_user_context_text", "") or "")
+
+        def sync_enabled_state():
+            textbox.configure(state="normal" if enabled_var.get() else "disabled")
+
+        def on_toggle():
+            sync_enabled_state()
+
+        cb.configure(command=on_toggle)
+        sync_enabled_state()
+
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(padx=14, pady=(0, 14), fill="x")
+
+        def on_save():
+            self.config.rename_use_user_context = bool(enabled_var.get())
+            self.config.rename_user_context_text = textbox.get("1.0", "end").strip()
+            save_config(self.config)
+            self._refresh_rename_strategy_ui()
+            dlg.destroy()
+
+        ctk.CTkButton(btn_row, text="Salva", width=110, command=on_save).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            btn_row,
+            text="Chiudi",
+            width=110,
+            fg_color="transparent",
+            border_width=1,
+            command=dlg.destroy,
+        ).pack(side="right")
 
     def _on_output_mode_changed(self) -> None:
         """Show/hide the folder-picker row based on the selected output mode."""

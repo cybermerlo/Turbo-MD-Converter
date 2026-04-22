@@ -357,6 +357,43 @@ class SettingsWindow(ctk.CTkToplevel):
             fg_color="transparent", border_width=1,
         ).pack(side="left")
 
+        _section_header(tab, "Strategia rinomina")
+
+        self.rename_batch_context_var = ctk.BooleanVar(
+            value=getattr(self.config, "rename_use_batch_context", False)
+        )
+        ctk.CTkCheckBox(
+            tab,
+            text="Usa contesto di tutto il batch (rinomina dopo OCR di tutti i file)",
+            variable=self.rename_batch_context_var,
+        ).pack(padx=10, pady=(0, 4), anchor="w")
+        _hint(
+            tab,
+            "Se disattivo, la rinomina avviene file-per-file subito dopo la conversione "
+            "(comportamento classico). Se attivo, rinomina a fine batch con contesto globale.",
+        )
+
+        _section_header(tab, "Contesto utente aggiuntivo (opzionale)")
+
+        self.rename_user_context_var = ctk.BooleanVar(
+            value=getattr(self.config, "rename_use_user_context", False)
+        )
+        ctk.CTkCheckBox(
+            tab,
+            text="Fornisci un contesto testuale da usare durante la rinomina",
+            variable=self.rename_user_context_var,
+            command=self._on_rename_user_context_toggle,
+        ).pack(padx=10, pady=(0, 4), anchor="w")
+
+        self.rename_user_context_text = ctk.CTkTextbox(
+            tab, height=85, font=ctk.CTkFont(family="Consolas", size=11)
+        )
+        self.rename_user_context_text.pack(padx=10, pady=(0, 8), fill="x")
+        self.rename_user_context_text.insert(
+            "1.0", getattr(self.config, "rename_user_context_text", "")
+        )
+        self._on_rename_user_context_toggle()
+
     # ─── Schema helpers ───────────────────────────────────────────────────────
 
     def _on_schema_changed(self, schema_name: str) -> None:
@@ -423,6 +460,10 @@ class SettingsWindow(ctk.CTkToplevel):
     def _reset_rename_prompt(self) -> None:
         self.config.rename_prompt = ""
 
+    def _on_rename_user_context_toggle(self) -> None:
+        enabled = self.rename_user_context_var.get()
+        self.rename_user_context_text.configure(state="normal" if enabled else "disabled")
+
     # ─── Save ────────────────────────────────────────────────────────────────
 
     def _save(self) -> None:
@@ -442,5 +483,10 @@ class SettingsWindow(ctk.CTkToplevel):
         subfolder_name = self.subfolder_name_entry.get().strip()
         if subfolder_name:
             self.config.output_subfolder_name = subfolder_name
+        self.config.rename_use_batch_context = self.rename_batch_context_var.get()
+        self.config.rename_use_user_context = self.rename_user_context_var.get()
+        self.config.rename_user_context_text = self.rename_user_context_text.get(
+            "1.0", "end"
+        ).strip()
         self.on_save(self.config)
         self.destroy()

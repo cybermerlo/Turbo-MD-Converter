@@ -4,8 +4,10 @@ import email
 import email.policy
 import logging
 import math
+import re
 import tempfile
 import threading
+from collections import Counter
 from pathlib import Path
 from typing import Callable
 
@@ -33,7 +35,10 @@ from pipeline.events import (
 )
 from utils.cost_tracker import CostTracker
 from utils.file_renamer import (
-    build_new_filepath, derive_filename_from_llm, rename_file,
+    build_new_filepath,
+    derive_batch_profiles_from_llm,
+    derive_filename_from_llm,
+    rename_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,6 +98,9 @@ class DocumentProcessor:
         self,
         pdf_path: Path,
         cancel_event: threading.Event,
+        rename_history: list[dict] | None = None,
+        defer_rename: bool = False,
+        deferred_renames: list[dict] | None = None,
     ) -> tuple[bool, dict]:
         """Process one document through the full pipeline.
 
@@ -349,30 +357,14 @@ class DocumentProcessor:
         markdown = None
         json_data = None
 
-        # Derive filename via LLM once, reused for both MD header and actual rename.
+        # When rename is deferred, we will derive names after OCR is complete
+        # for the whole batch.
         _rename_result: tuple[str, str] | None = None
-        if self.config.rename_files:
-            from config.defaults import DEFAULT_RENAME_PROMPT
-            rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
-            _rename_result = derive_filename_from_llm(
-                ocr_text=ocr_result.combined_text,
-                api_key=self.config.gemini_api_key,
-                model_id=self.config.ocr_model_id,
-                rename_prompt=rename_prompt,
-                original_filename=pdf_path.name,
-            )
 
         if "markdown" in self.config.output_formats:
-            # When renaming is enabled, use the future renamed filename in the MD
-            # header so the title matches the file that ends up on disk.
-            header_filename = pdf_path.name
-            if _rename_result:
-                _date_str, _description = _rename_result
-                header_filename = f"{_date_str} - {_description}{pdf_path.suffix}"
-
             markdown = self.md_formatter.format(
                 extractions=extractions,
-                source_filename=header_filename,
+                source_filename=pdf_path.name,
                 total_pages=ocr_result.total_pages,
                 ocr_text=ocr_result.combined_text if self.config.include_ocr_text_in_output else None,
                 cost_info=None,
@@ -410,10 +402,38 @@ class DocumentProcessor:
         # Phase 4: Rename files based on extracted content (if enabled)
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
-        if self.config.rename_files and _rename_result:
-            renamed_pdf_path, renamed_output_files = self._rename_files(
-                pdf_path, output_files, _rename_result,
-            )
+        if self.config.rename_files:
+            if defer_rename:
+                if deferred_renames is not None:
+                    deferred_renames.append({
+                        "doc_id": len(deferred_renames) + 1,
+                        "pdf_path": pdf_path,
+                        "output_files": list(output_files),
+                        "ocr_text": ocr_result.combined_text,
+                        "original_name": pdf_path.name,
+                    })
+                    self.emit(LogEvent(
+                        message=f"Rinomina pianificata dopo OCR batch: {pdf_path.name}"
+                    ))
+            else:
+                from config.defaults import DEFAULT_RENAME_PROMPT
+                rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
+                _rename_result = derive_filename_from_llm(
+                    ocr_text=ocr_result.combined_text,
+                    api_key=self.config.gemini_api_key,
+                    model_id=self.config.ocr_model_id,
+                    rename_prompt=rename_prompt,
+                    original_filename=pdf_path.name,
+                    rename_examples=rename_history,
+                    user_context_text=(
+                        self.config.rename_user_context_text
+                        if self.config.rename_use_user_context
+                        else ""
+                    ),
+                )
+                renamed_pdf_path, renamed_output_files = self._rename_files(
+                    pdf_path, output_files, _rename_result, rename_history=rename_history,
+                )
 
         self.emit(PipelineCompleteEvent(
             pdf_path=renamed_pdf_path,
@@ -436,6 +456,8 @@ class DocumentProcessor:
         failed = 0
         total_cost_tracker = CostTracker()
         self._native_pages_batch = 0
+        rename_history: list[dict] = []
+        deferred_renames: list[dict] = []
 
         for i, pdf_path in enumerate(pdf_paths):
             if cancel_event.is_set():
@@ -445,7 +467,13 @@ class DocumentProcessor:
                 message=f"Documento {i + 1}/{len(pdf_paths)}: {pdf_path.name}"
             ))
 
-            success, cost_info = self.process_single(pdf_path, cancel_event)
+            success, cost_info = self.process_single(
+                pdf_path,
+                cancel_event,
+                rename_history=rename_history,
+                defer_rename=self.config.rename_files and self.config.rename_use_batch_context,
+                deferred_renames=deferred_renames,
+            )
             
             # Accumula i costi nel total_cost_tracker (salva prima che vengano resettati)
             for call in self.cost_tracker._calls:
@@ -460,6 +488,18 @@ class DocumentProcessor:
                 successful += 1
             else:
                 failed += 1
+
+        if (
+            self.config.rename_files
+            and self.config.rename_use_batch_context
+            and not cancel_event.is_set()
+            and deferred_renames
+        ):
+            self._run_deferred_renames(
+                deferred_renames=deferred_renames,
+                rename_history=rename_history,
+                cancel_event=cancel_event,
+            )
 
         # Mostra il resoconto totale alla fine
         total_cost_info = total_cost_tracker.get_totals()
@@ -508,6 +548,7 @@ class DocumentProcessor:
         pdf_path: Path,
         output_files: list[Path],
         rename_result: tuple[str, str],
+        rename_history: list[dict] | None = None,
     ) -> tuple[Path, list[Path]]:
         """Rename PDF source and/or MD output using the pre-computed filename parts.
 
@@ -521,6 +562,7 @@ class DocumentProcessor:
 
         renamed_pdf = pdf_path
         renamed_outputs = list(output_files)
+        history_final_name: str | None = None
 
         # Rename output MD file
         if self.config.rename_mode in ("md", "both"):
@@ -533,6 +575,7 @@ class DocumentProcessor:
                             original_path=fp, new_path=actual_path, file_type="md",
                         ))
                         renamed_outputs[i] = actual_path
+                        history_final_name = history_final_name or actual_path.name
                     except OSError as e:
                         self.emit(LogEvent(
                             message=f"Errore rinomina MD: {e}", level="ERROR",
@@ -547,12 +590,140 @@ class DocumentProcessor:
                     original_path=pdf_path, new_path=actual_pdf_path, file_type="pdf",
                 ))
                 renamed_pdf = actual_pdf_path
+                history_final_name = actual_pdf_path.name
             except OSError as e:
                 self.emit(LogEvent(
                     message=f"Errore rinomina PDF: {e}", level="ERROR",
                 ))
 
+        if rename_history is not None and history_final_name:
+            rename_history.append({
+                "file_type": "document",
+                "original_name": pdf_path.name,
+                "final_name": history_final_name,
+                "date_str": date_str,
+                "description": description,
+            })
+
         return renamed_pdf, renamed_outputs
+
+    def _run_deferred_renames(
+        self,
+        deferred_renames: list[dict],
+        rename_history: list[dict],
+        cancel_event: threading.Event,
+    ) -> None:
+        """Run batch rename after all OCR passes are completed."""
+        from config.defaults import DEFAULT_RENAME_PROMPT
+
+        rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
+        batch_documents = self._build_batch_documents_context(deferred_renames)
+        batch_profiles = derive_batch_profiles_from_llm(
+            batch_documents=batch_documents,
+            api_key=self.config.gemini_api_key,
+            model_id=self.config.ocr_model_id,
+            user_context_text=(
+                self.config.rename_user_context_text
+                if self.config.rename_use_user_context
+                else ""
+            ),
+        )
+        self._apply_batch_profiles(batch_documents, batch_profiles)
+        total = len(deferred_renames)
+        self.emit(LogEvent(
+            message=f"Avvio rinomina post-OCR su {total} documenti"
+        ))
+
+        for idx, item in enumerate(deferred_renames, 1):
+            if cancel_event.is_set():
+                self.emit(LogEvent(
+                    message="Rinomina post-OCR annullata", level="WARNING"
+                ))
+                break
+
+            pdf_path: Path = item["pdf_path"]
+            output_files: list[Path] = item["output_files"]
+            ocr_text: str = item["ocr_text"]
+            self.emit(LogEvent(
+                message=f"Rinomina post-OCR {idx}/{total}: {pdf_path.name}"
+            ))
+            rename_result = derive_filename_from_llm(
+                ocr_text=ocr_text,
+                api_key=self.config.gemini_api_key,
+                model_id=self.config.ocr_model_id,
+                rename_prompt=rename_prompt,
+                original_filename=pdf_path.name,
+                rename_examples=rename_history,
+                batch_documents=batch_documents,
+                current_doc_id=item.get("doc_id"),
+                user_context_text=(
+                    self.config.rename_user_context_text
+                    if self.config.rename_use_user_context
+                    else ""
+                ),
+            )
+            self._rename_files(
+                pdf_path=pdf_path,
+                output_files=output_files,
+                rename_result=rename_result,
+                rename_history=rename_history,
+            )
+
+    @staticmethod
+    def _build_batch_documents_context(deferred_renames: list[dict]) -> list[dict]:
+        """Prepare compact OCR previews for all documents in batch."""
+        docs: list[dict] = []
+        for item in deferred_renames:
+            ocr_text = str(item.get("ocr_text", "")).strip()
+            preview_start = ocr_text[:1200]
+            mid = len(ocr_text) // 2
+            preview_middle = ocr_text[mid:mid + 700]
+            docs.append({
+                "doc_id": item.get("doc_id"),
+                "original_name": str(item.get("original_name", "")).strip(),
+                "ocr_preview_start": preview_start,
+                "ocr_preview_middle": preview_middle,
+                "keyword_hint": DocumentProcessor._extract_keyword_hint(ocr_text),
+            })
+        return docs
+
+    @staticmethod
+    def _apply_batch_profiles(batch_documents: list[dict], profiles: dict[int, dict]) -> None:
+        """Merge LLM-derived document profiles into batch context in-place."""
+        if not profiles:
+            return
+        for doc in batch_documents:
+            doc_id = doc.get("doc_id")
+            if doc_id is None:
+                continue
+            profile = profiles.get(int(doc_id))
+            if not profile:
+                continue
+            doc["profile_primary_topic"] = profile.get("primary_topic", "")
+            doc["profile_focus"] = profile.get("distinguishing_focus", "")
+            doc["profile_naming_hint"] = profile.get("naming_hint", "")
+            doc["profile_terms"] = profile.get("distinctive_terms", [])
+
+    @staticmethod
+    def _extract_keyword_hint(text: str, max_terms: int = 8) -> str:
+        """Extract lightweight generic keywords from OCR text."""
+        if not text:
+            return ""
+        tokens = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9_-]{2,}", text.lower())
+        stopwords = {
+            "the", "and", "for", "with", "this", "that", "from", "sono", "della",
+            "delle", "degli", "dello", "dalla", "dalle", "dei", "del", "alla",
+            "alle", "agli", "allo", "nell", "nella", "nelle", "negli", "sulla",
+            "sulle", "sugli", "come", "anche", "solo", "dopo", "prima", "quando",
+            "quindi", "perche", "dove", "quali", "quale", "documento", "pagina",
+            "slide", "webinar", "appunti", "file", "testo", "sono", "una", "uno",
+            "dati", "data", "anno", "mese", "giorno", "dell", "all", "degli",
+        }
+        counts = Counter(t for t in tokens if t not in stopwords and not t.isdigit())
+        if not counts:
+            return ""
+        terms = [term for term, _ in counts.most_common(max_terms)]
+        return ", ".join(terms)
 
     def _on_ocr_page(self, page_num: int, total_pages: int, success: bool) -> None:
         """Callback from OCR pipeline after each page."""

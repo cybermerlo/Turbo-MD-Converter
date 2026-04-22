@@ -31,6 +31,9 @@ class AppConfig:
     rename_files: bool = False
     rename_mode: str = "both"
     rename_prompt: str = ""
+    rename_use_batch_context: bool = False
+    rename_use_user_context: bool = False
+    rename_user_context_text: str = ""
     use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
     # "accanto"      → next to source file (default)

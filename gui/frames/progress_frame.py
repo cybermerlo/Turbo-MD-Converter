@@ -64,6 +64,9 @@ class ProgressFrame(ctk.CTkFrame):
         )
         self._cost_label.pack(side="right")
 
+        self.actions_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        self.actions_frame.pack(fill="x", pady=(10, 0))
+
     # ─── Public API ───────────────────────────────────────────────────────────
 
     def set_batch(self, total_files: int) -> None:

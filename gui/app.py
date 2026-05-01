@@ -71,6 +71,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._build_layout()
         self._setup_drag_drop()
+        self.bind("<Delete>", self._on_delete_key)
         self._start_queue_polling()
 
         if initial_files:
@@ -136,7 +137,12 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         left.grid_rowconfigure(1, weight=0)   # options card
         left.grid_rowconfigure(2, weight=0)   # action buttons
 
-        self.input_frame = InputFrame(left, on_files_changed=self._on_files_changed)
+        self.input_frame = InputFrame(
+            left,
+            on_files_changed=self._on_files_changed,
+            on_selection_changed=self._on_input_selection_changed,
+            on_open_requested=self._open_input_file,
+        )
         self.input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
         left.grid_columnconfigure(0, weight=1)
 
@@ -154,7 +160,10 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress_frame = ProgressFrame(right)
         self.progress_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
 
-        self.output_frame = OutputFrame(right)
+        self.output_frame = OutputFrame(
+            right,
+            actions_parent=self.progress_frame.actions_frame,
+        )
         self.output_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 6))
 
         self.log_frame = LogFrame(right)
@@ -243,14 +252,13 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.rename_mode_menu.pack(side="right")
 
         # ── Rename strategy + quick context editor ───────────────────────────
-        strategy_row = ctk.CTkFrame(card, fg_color="transparent")
-        strategy_row.pack(padx=12, pady=(0, 2), fill="x")
+        self.rename_strategy_row = ctk.CTkFrame(card, fg_color="transparent")
 
         self.rename_batch_context_var = ctk.BooleanVar(
             value=bool(getattr(self.config, "rename_use_batch_context", False))
         )
         self.rename_batch_context_cb = ctk.CTkCheckBox(
-            strategy_row,
+            self.rename_strategy_row,
             text="Batch-context",
             variable=self.rename_batch_context_var,
             command=self._on_rename_strategy_changed,
@@ -258,7 +266,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.rename_batch_context_cb.pack(side="left", padx=(0, 10))
 
         self.rename_strategy_label = ctk.CTkLabel(
-            strategy_row,
+            self.rename_strategy_row,
             text=self._get_rename_strategy_label(),
             font=ctk.CTkFont(size=11),
             text_color=("gray25", "gray80"),
@@ -267,7 +275,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.rename_strategy_label.pack(side="left", fill="x", expand=True, padx=(0, 8))
 
         self.rename_context_btn = ctk.CTkButton(
-            strategy_row,
+            self.rename_strategy_row,
             text="Contesto rinomina…",
             width=140,
             fg_color="transparent",
@@ -276,11 +284,9 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.rename_context_btn.pack(side="right")
 
-        # Ensure initial state/label visibility
-        self._refresh_rename_strategy_ui()
-
         # ── Divider ───────────────────────────────────────────────────────────
-        ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(8, 4), fill="x")
+        self.rename_output_divider = ctk.CTkFrame(card, height=1, fg_color="gray30")
+        self.rename_output_divider.pack(padx=12, pady=(8, 4), fill="x")
 
         # ── Output mode ───────────────────────────────────────────────────────
         _section_label(card, "Destinazione output").pack(padx=12, pady=(4, 2), anchor="w")
@@ -349,12 +355,42 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
     # ─── Drag & drop ─────────────────────────────────────────────────────────
 
     def _setup_drag_drop(self) -> None:
-        self.input_frame.drop_target_register(DND_FILES)
-        self.input_frame.dnd_bind("<<Drop>>", self._on_drop_files)
+        self._register_drop_targets(
+            self._on_drop_files,
+            self,
+            self.input_frame,
+            self.input_frame.file_list,
+            self.output_frame,
+            self.output_frame.tabview,
+            self.output_frame.md_textbox,
+        )
+        self._register_drop_targets(
+            self._on_drop_merge_files,
+            self.output_frame.merge_frame,
+            self.output_frame.merge_drop_box,
+        )
+
+    def _register_drop_targets(self, callback, *widgets) -> None:
+        for widget in widgets:
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", callback)
+            except Exception:
+                pass
 
     def _on_drop_files(self, event) -> None:
+        path_objs = self._paths_from_drop_event(event)
+        self.input_frame.add_paths(path_objs)
+        return event.action
+
+    def _on_drop_merge_files(self, event) -> None:
+        path_objs = self._paths_from_drop_event(event)
+        self.output_frame.add_merge_paths(path_objs)
+        return event.action
+
+    def _paths_from_drop_event(self, event) -> list[Path]:
         if not event.data:
-            return
+            return []
         try:
             paths = self.tk.splitlist(event.data)
         except Exception:
@@ -370,9 +406,12 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 import urllib.request
                 p = urllib.request.url2pathname(urllib.parse.urlparse(p).path)
             path_objs.append(Path(p))
+        return path_objs
 
-        self.input_frame.add_paths(path_objs)
-        return event.action
+    def _on_delete_key(self, event=None):
+        if self.input_frame.get_selected_path() is not None:
+            return self.input_frame.handle_delete_key(event)
+        return None
 
     # ─── Event queue ─────────────────────────────────────────────────────────
 
@@ -425,10 +464,11 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 self.output_frame.set_output_dir(event.file_paths[0].parent)
                 for fp in event.file_paths:
                     try:
-                        content = fp.read_text(encoding="utf-8")
                         if fp.suffix == ".md":
-                            self.output_frame.show_markdown(content)
+                            if self.input_frame.get_selected_path() is None:
+                                self.output_frame.show_markdown_file(fp)
                         elif fp.suffix == ".json":
+                            content = fp.read_text(encoding="utf-8")
                             self.output_frame.show_json(content)
                     except OSError:
                         pass
@@ -446,6 +486,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 if md_files:
                     self._converted_mds[event.pdf_path] = md_files[0]
                     self.input_frame.set_md_for_file(event.pdf_path, md_files[0])
+                    if self.input_frame.get_selected_path() == event.pdf_path:
+                        self.output_frame.show_markdown_file(md_files[0])
 
         elif isinstance(event, BatchCompleteEvent):
             self._on_batch_complete(event)
@@ -462,7 +504,19 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                     if md_path == event.original_path:
                         self._converted_mds[input_path] = event.new_path
                         self.input_frame.set_md_for_file(input_path, event.new_path)
+                        if self.input_frame.get_selected_path() == input_path:
+                            self.output_frame.show_markdown_file(event.new_path)
                         break
+            elif event.file_type == "pdf" and event.original_path and event.new_path:
+                md_path = self._converted_mds.pop(event.original_path, None)
+                if md_path:
+                    self._converted_mds[event.new_path] = md_path
+                was_selected = self.input_frame.get_selected_path() == event.original_path
+                self.input_frame.replace_path(event.original_path, event.new_path)
+                if md_path:
+                    self.input_frame.set_md_for_file(event.new_path, md_path)
+                    if was_selected:
+                        self.output_frame.show_markdown_file(md_path)
 
         elif isinstance(event, ErrorEvent):
             self.log_frame.append(event.error_message, "ERROR")
@@ -475,6 +529,85 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _on_files_changed(self, paths: list[Path]) -> None:
         has_files = len(paths) > 0
         self.start_btn.configure(state="normal" if has_files else "disabled")
+        current_paths = set(paths)
+        for input_path in list(self._converted_mds):
+            if input_path not in current_paths:
+                self._converted_mds.pop(input_path, None)
+
+    def _on_input_selection_changed(self, path: Path | None) -> None:
+        if path is None:
+            self.output_frame.clear_preview()
+            return
+        md_path = self._converted_mds.get(path)
+        if md_path and md_path.exists():
+            self.output_frame.show_markdown_file(md_path)
+        else:
+            self.output_frame.clear_preview(
+                "Il Markdown del file selezionato non e' ancora disponibile."
+            )
+
+    def _open_input_file(self, path: Path, is_clipboard: bool) -> None:
+        if is_clipboard:
+            self._open_clipboard_editor(path)
+            return
+        if not path.exists():
+            return
+        import os
+        import subprocess
+        import sys
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+
+    def _open_clipboard_editor(self, path: Path) -> None:
+        dlg = ctk.CTkToplevel(self)
+        dlg.title(f"Appunti - {path.name}")
+        dlg.geometry("640x420")
+        dlg.minsize(460, 300)
+        dlg.transient(self)
+
+        ctk.CTkLabel(
+            dlg,
+            text="Contenuto incollato",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).pack(padx=14, pady=(14, 6), anchor="w")
+
+        textbox = ctk.CTkTextbox(dlg, font=ctk.CTkFont(family="Consolas", size=11), wrap="word")
+        textbox.pack(padx=14, pady=(0, 10), fill="both", expand=True)
+        try:
+            textbox.insert("1.0", path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+
+        btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+        btn_row.pack(padx=14, pady=(0, 14), fill="x")
+        status = ctk.CTkLabel(btn_row, text="", font=ctk.CTkFont(size=11), text_color="gray55")
+        status.pack(side="left")
+
+        def save():
+            try:
+                path.write_text(textbox.get("1.0", "end-1c"), encoding="utf-8")
+                status.configure(text="Salvato")
+            except OSError as exc:
+                status.configure(text=f"Errore: {exc}")
+
+        ctk.CTkButton(
+            btn_row,
+            text="Salva",
+            width=100,
+            command=save,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            btn_row,
+            text="Chiudi",
+            width=100,
+            fg_color="transparent",
+            border_width=1,
+            command=dlg.destroy,
+        ).pack(side="right")
 
     def _start_processing(self) -> None:
         pdf_paths = self.input_frame.get_file_paths()
@@ -509,6 +642,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.active_schema = self.schema_var.get()
         self.config.rename_files = self.rename_files_var.get()
         self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
+        self.config.rename_use_batch_context = bool(self.rename_batch_context_var.get())
         self.config.output_mode = self.output_mode_var.get()
         self.config.output_formats = ["markdown"]
 
@@ -625,6 +759,15 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.rename_strategy_label.configure(text=self._get_rename_strategy_label())
 
         rename_on = bool(self.rename_files_var.get())
+        if hasattr(self, "rename_strategy_row"):
+            if rename_on:
+                if not self.rename_strategy_row.winfo_manager():
+                    self.rename_strategy_row.pack(
+                        padx=12, pady=(0, 2), fill="x",
+                        before=self.rename_output_divider,
+                    )
+            else:
+                self.rename_strategy_row.pack_forget()
         if hasattr(self, "rename_context_btn"):
             self.rename_context_btn.configure(state="normal" if rename_on else "disabled")
         if hasattr(self, "rename_batch_context_cb"):

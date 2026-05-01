@@ -1,5 +1,8 @@
 """File/folder selection frame."""
 
+import subprocess
+import sys
+import tempfile
 from pathlib import Path
 from tkinter import filedialog
 
@@ -47,12 +50,20 @@ _EXT_ICON = {
 class _FileRow(ctk.CTkFrame):
     """Single row in the file list: badge + name + optional copy button."""
 
-    def __init__(self, parent: ctk.CTkScrollableFrame, path: Path):
+    def __init__(
+        self,
+        parent: ctk.CTkScrollableFrame,
+        path: Path,
+        on_select: callable,
+        on_open: callable,
+    ):
         super().__init__(parent, fg_color="transparent", corner_radius=0)
         self.pack(fill="x", padx=2, pady=1)
 
         self._path = path
         self._md_path: Path | None = None
+        self._on_select = on_select
+        self._on_open = on_open
 
         tag = _EXT_ICON.get(path.suffix.lower(), "???")
 
@@ -73,12 +84,22 @@ class _FileRow(ctk.CTkFrame):
         self._copy_btn.pack(side="right", padx=(4, 2), pady=2)
 
         # File label
-        ctk.CTkLabel(
+        self._label = ctk.CTkLabel(
             self,
             text=f"[{tag}]  {path.name}",
             font=ctk.CTkFont(family="Consolas", size=11),
             anchor="w",
-        ).pack(side="left", fill="x", expand=True, padx=(4, 0), pady=2)
+        )
+        self._label.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=2)
+
+        self.bind("<Button-1>", self._handle_select)
+        self._label.bind("<Button-1>", self._handle_select)
+        self._copy_btn.bind("<Button-1>", self._handle_select, add="+")
+        self.bind("<Double-Button-1>", self._handle_open)
+        self._label.bind("<Double-Button-1>", self._handle_open)
+
+    def set_selected(self, selected: bool) -> None:
+        self.configure(fg_color=("#d9ebff", "#1f3a5a") if selected else "transparent")
 
     def enable_copy(self, md_path: Path) -> None:
         self._md_path = md_path
@@ -102,15 +123,34 @@ class _FileRow(ctk.CTkFrame):
         except Exception:
             pass
 
+    def _handle_select(self, _event=None):
+        self.focus_set()
+        self._on_select(self._path)
+
+    def _handle_open(self, _event=None):
+        self._on_open(self._path)
+        return "break"
+
 
 class InputFrame(ctk.CTkFrame):
     """File selection panel with list of selected documents."""
 
-    def __init__(self, master, on_files_changed: callable = None, **kwargs):
+    def __init__(
+        self,
+        master,
+        on_files_changed: callable = None,
+        on_selection_changed: callable = None,
+        on_open_requested: callable = None,
+        **kwargs,
+    ):
         super().__init__(master, **kwargs)
         self.on_files_changed = on_files_changed
+        self.on_selection_changed = on_selection_changed
+        self.on_open_requested = on_open_requested
         self._file_paths: list[Path] = []
         self._rows: dict[Path, _FileRow] = {}
+        self._selected_path: Path | None = None
+        self._clipboard_paths: set[Path] = set()
 
         # ── Header ───────────────────────────────────────────────────────────
         ctk.CTkLabel(
@@ -220,8 +260,17 @@ class InputFrame(ctk.CTkFrame):
         self._rows.clear()
 
         for path in self._file_paths:
-            row = _FileRow(self.file_list, path)
+            row = _FileRow(
+                self.file_list,
+                path,
+                on_select=self.select_path,
+                on_open=self._open_path,
+            )
             self._rows[path] = row
+            row.set_selected(path == self._selected_path)
+
+        if self._selected_path not in self._file_paths:
+            self._selected_path = None
 
         n = len(self._file_paths)
         if n == 0:
@@ -253,7 +302,9 @@ class InputFrame(ctk.CTkFrame):
 
             if temp_file not in self._file_paths:
                 self._file_paths.append(temp_file)
+                self._clipboard_paths.add(temp_file)
             self._refresh_list()
+            self.select_path(temp_file)
 
         except Exception:
             pass
@@ -263,6 +314,9 @@ class InputFrame(ctk.CTkFrame):
     def get_file_paths(self) -> list[Path]:
         return list(self._file_paths)
 
+    def get_selected_path(self) -> Path | None:
+        return self._selected_path
+
     def get_pdf_paths(self) -> list[Path]:
         """Alias for backward compatibility."""
         return self.get_file_paths()
@@ -271,11 +325,21 @@ class InputFrame(ctk.CTkFrame):
         """Add file paths (e.g. from drag & drop). Skips unsupported formats and duplicates."""
         for path in paths:
             path = Path(path)
+            if path.is_dir():
+                candidates = []
+                for ext in SUPPORTED_EXTENSIONS:
+                    candidates.extend(path.glob(f"*{ext}"))
+                for candidate in sorted(candidates):
+                    if candidate not in self._file_paths:
+                        self._file_paths.append(candidate)
+                continue
             if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
             if path not in self._file_paths:
                 self._file_paths.append(path)
         self._refresh_list()
+        if paths and self._selected_path is None and self._file_paths:
+            self.select_path(self._file_paths[-1])
 
     def set_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -290,7 +354,82 @@ class InputFrame(ctk.CTkFrame):
         if row:
             row.enable_copy(md_path)
 
+    def replace_path(self, old_path: Path, new_path: Path) -> None:
+        """Replace a listed input path after the underlying file is renamed."""
+        old_path = Path(old_path)
+        new_path = Path(new_path)
+        try:
+            index = self._file_paths.index(old_path)
+        except ValueError:
+            return
+
+        self._file_paths[index] = new_path
+        if old_path in self._clipboard_paths:
+            self._clipboard_paths.remove(old_path)
+            self._clipboard_paths.add(new_path)
+
+        was_selected = self._selected_path == old_path
+        if was_selected:
+            self._selected_path = new_path
+
+        self._refresh_list()
+        if was_selected:
+            self.select_path(new_path)
+
     def reset_copy_buttons(self) -> None:
         """Disable all per-file copy buttons (call at start of a new batch)."""
         for row in self._rows.values():
             row.disable_copy()
+
+    def select_path(self, path: Path | None) -> None:
+        if path is not None and path not in self._file_paths:
+            return
+        self._selected_path = path
+        for row_path, row in self._rows.items():
+            row.set_selected(row_path == path)
+        if self.on_selection_changed:
+            self.on_selection_changed(path)
+
+    def remove_selected(self) -> None:
+        if not self._selected_path:
+            return
+        path = self._selected_path
+        if path in self._file_paths:
+            self._file_paths.remove(path)
+        self._clipboard_paths.discard(path)
+        self._selected_path = None
+        self._refresh_list()
+        if self.on_selection_changed:
+            self.on_selection_changed(None)
+
+    def is_clipboard_path(self, path: Path) -> bool:
+        if path in self._clipboard_paths:
+            return True
+        temp_root = Path(tempfile.gettempdir()) / "OCR_LangExtract"
+        try:
+            return path.parent == temp_root and path.name.startswith("Appunti_")
+        except Exception:
+            return False
+
+    def handle_delete_key(self, event=None):
+        self.remove_selected()
+        return "break"
+
+    def _open_path(self, path: Path) -> None:
+        self.select_path(path)
+        if self.on_open_requested:
+            self.on_open_requested(path, self.is_clipboard_path(path))
+            return
+        self._open_with_default_app(path)
+
+    @staticmethod
+    def _open_with_default_app(path: Path) -> None:
+        if not path.exists():
+            return
+        if sys.platform == "win32":
+            import os
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])

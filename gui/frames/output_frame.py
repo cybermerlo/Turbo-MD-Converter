@@ -10,6 +10,7 @@ from tkinter import filedialog
 import customtkinter as ctk
 
 _MERGE_EXTENSIONS = (".md", ".markdown")
+_PREVIEW_TAB_NAME = "Apri editor Markdown"
 
 
 class MarkdownEditorWindow(ctk.CTkToplevel):
@@ -43,6 +44,37 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             text_color="gray55",
         )
         self.status_label.pack(side="right")
+
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.pack(padx=14, pady=(0, 8), fill="x")
+
+        ctk.CTkButton(
+            toolbar,
+            text="B",
+            width=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=lambda: self._wrap_selection("**", "**"),
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            toolbar,
+            text="I",
+            width=34,
+            font=ctk.CTkFont(size=13, slant="italic"),
+            fg_color="transparent",
+            border_width=1,
+            command=lambda: self._wrap_selection("*", "*"),
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            toolbar,
+            text="U",
+            width=34,
+            font=ctk.CTkFont(size=13, underline=True),
+            fg_color="transparent",
+            border_width=1,
+            command=lambda: self._wrap_selection("<u>", "</u>"),
+        ).pack(side="left")
 
         body = ctk.CTkFrame(self)
         body.pack(padx=14, pady=(0, 14), fill="both", expand=True)
@@ -80,6 +112,12 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.text.tag_configure("h1", font=h1, spacing1=10, spacing3=6)
         self.text.tag_configure("h2", font=h2, spacing1=8, spacing3=4)
         self.text.tag_configure("bold", font=bold)
+        italic = base.copy()
+        italic.configure(slant="italic")
+        underline = base.copy()
+        underline.configure(underline=True)
+        self.text.tag_configure("italic", font=italic)
+        self.text.tag_configure("underline", font=underline)
         self.text.tag_configure("code", font=mono, background="#eeeeee")
 
     def _load_file(self) -> None:
@@ -114,10 +152,32 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         except OSError as exc:
             self.status_label.configure(text=f"Errore: {exc}")
 
+    def _wrap_selection(self, prefix: str, suffix: str) -> None:
+        try:
+            start = self.text.index("sel.first")
+            end = self.text.index("sel.last")
+        except tk.TclError:
+            insert = self.text.index("insert")
+            self.text.insert(insert, prefix + suffix)
+            self.text.mark_set("insert", f"{insert}+{len(prefix)}c")
+        else:
+            selected = self.text.get(start, end)
+            self.text.delete(start, end)
+            self.text.insert(start, f"{prefix}{selected}{suffix}")
+            self.text.tag_remove("sel", "1.0", "end")
+            self.text.tag_add(
+                "sel",
+                f"{start}+{len(prefix)}c",
+                f"{start}+{len(prefix) + len(selected)}c",
+            )
+        self.text.focus_set()
+        self.text.edit_modified(True)
+        self._on_modified()
+
     def _apply_markdown_tags(self) -> None:
         self._highlight_after_id = None
         cursor = self.text.index("insert")
-        for tag in ("h1", "h2", "bold", "code"):
+        for tag in ("h1", "h2", "bold", "italic", "underline", "code"):
             self.text.tag_remove(tag, "1.0", "end")
 
         line_count = int(self.text.index("end-1c").split(".")[0])
@@ -140,6 +200,34 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
                     break
                 self.text.tag_add("bold", f"{start}+2c", end)
                 search_from = f"{end}+2c"
+
+            search_from = line_start
+            while True:
+                start = self.text.search("<u>", search_from, line_end)
+                if not start:
+                    break
+                end = self.text.search("</u>", f"{start}+3c", line_end)
+                if not end:
+                    break
+                self.text.tag_add("underline", f"{start}+3c", end)
+                search_from = f"{end}+4c"
+
+            search_from = line_start
+            while True:
+                start = self.text.search("*", search_from, line_end)
+                if not start:
+                    break
+                if self.text.get(start, f"{start}+2c") == "**":
+                    search_from = f"{start}+2c"
+                    continue
+                end = self.text.search("*", f"{start}+1c", line_end)
+                if not end:
+                    break
+                if self.text.get(end, f"{end}+2c") == "**":
+                    search_from = f"{end}+2c"
+                    continue
+                self.text.tag_add("italic", f"{start}+1c", end)
+                search_from = f"{end}+1c"
 
             search_from = line_start
             while True:
@@ -176,16 +264,7 @@ class OutputFrame(ctk.CTkFrame):
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(padx=10, pady=(10, 4), fill="both", expand=True)
 
-        self.tab_md = self.tabview.add("Anteprima Markdown")
-
-        preview_row = ctk.CTkFrame(self.tab_md, fg_color="transparent")
-        preview_row.pack(fill="x", pady=(0, 6))
-        ctk.CTkButton(
-            preview_row,
-            text="Anteprima Markdown",
-            command=self.open_markdown_preview,
-            width=150,
-        ).pack(side="left")
+        self.tab_md = self.tabview.add(_PREVIEW_TAB_NAME)
 
         self.md_textbox = ctk.CTkTextbox(
             self.tab_md,
@@ -411,6 +490,12 @@ class OutputFrame(ctk.CTkFrame):
             self.tabview.configure(command=self._on_tab_selected)
         except Exception:
             pass
+        try:
+            self.tabview._segmented_button._buttons_dict[_PREVIEW_TAB_NAME].configure(
+                command=self.open_markdown_preview
+            )
+        except Exception:
+            pass
 
     def _on_tab_selected(self) -> None:
         if not self._suppress_tab_command:
@@ -419,7 +504,7 @@ class OutputFrame(ctk.CTkFrame):
     def _set_markdown_tab(self) -> None:
         self._suppress_tab_command = True
         try:
-            self.tabview.set("Anteprima Markdown")
+            self.tabview.set(_PREVIEW_TAB_NAME)
         finally:
             self._suppress_tab_command = False
 

@@ -1,12 +1,16 @@
-"""File/folder selection frame."""
+"""File selection sidebar — dropzone + file rows with status pill, size, pages."""
 
+from __future__ import annotations
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
+
+from gui import theme
 
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".html", ".htm", ".md", ".rtf",
@@ -15,208 +19,263 @@ SUPPORTED_EXTENSIONS = (
     ".p7m", ".zip", ".7z", ".tar", ".tgz",
 )
 
-_EXT_ICON = {
-    ".pdf": "PDF",
-    ".txt": "TXT",
-    ".eml": "EML",
-    ".msg": "MSG",
-    ".docx": "DOCX",
-    ".html": "HTML",
-    ".htm": "HTML",
-    ".md": "MD",
-    ".rtf": "RTF",
-    ".jpg": "IMG",
-    ".jpeg": "IMG",
-    ".png": "IMG",
-    ".webp": "IMG",
-    ".tiff": "IMG",
-    ".tif": "IMG",
-    ".bmp": "IMG",
-    ".gif": "IMG",
-    ".mp3": "AUD",
-    ".wav": "AUD",
-    ".flac": "AUD",
-    ".m4a": "AUD",
-    ".ogg": "AUD",
-    ".mp4": "MP4",
-    ".p7m": "P7M",
-    ".zip": "ZIP",
-    ".7z":  "7Z",
-    ".tar": "TAR",
-    ".tgz": "TAR",
-}
+
+def _format_size(num_bytes: int) -> str:
+    if num_bytes is None:
+        return ""
+    n = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(n)} {unit}"
+            return f"{n:.1f} {unit}".replace(".0 ", " ")
+        n /= 1024
+    return f"{n:.1f} GB"
+
+
+def _count_pdf_pages(path: Path) -> int | None:
+    try:
+        import fitz  # PyMuPDF
+        with fitz.open(str(path)) as doc:
+            return doc.page_count
+    except Exception:
+        return None
 
 
 class _FileRow(ctk.CTkFrame):
-    """Single row in the file list: badge + name + optional copy button."""
+    """One row: badge + name+meta + status pill."""
 
-    def __init__(
-        self,
-        parent: ctk.CTkScrollableFrame,
-        path: Path,
-        on_select: callable,
-        on_open: callable,
-    ):
-        super().__init__(parent, fg_color="transparent", corner_radius=0)
-        self.pack(fill="x", padx=2, pady=1)
-
+    def __init__(self, parent, path: Path, on_select, on_open, **kwargs):
+        super().__init__(parent, fg_color="transparent", corner_radius=6, **kwargs)
         self._path = path
         self._md_path: Path | None = None
         self._on_select = on_select
         self._on_open = on_open
+        self._status = "queue"
+        self._cost = 0.0
+        self._selected = False
 
-        tag = _EXT_ICON.get(path.suffix.lower(), "???")
+        ext = path.suffix.lower()
+        badge_key = theme.EXT_TO_BADGE.get(ext, "TXT")
+        bg, fg = theme.BADGE_COLORS.get(badge_key, (theme.PAPER_2, theme.INK_2))
 
-        # Copy button (right side, hidden until MD is ready)
-        self._copy_btn = ctk.CTkButton(
-            self,
-            text="⎘",
-            width=26,
-            height=20,
-            font=ctk.CTkFont(size=12),
-            fg_color="transparent",
-            border_width=1,
-            border_color="gray40",
-            hover_color=("gray80", "gray30"),
-            state="disabled",
-            command=self._copy_to_clipboard,
+        self.grid_columnconfigure(1, weight=1)
+
+        self._badge = ctk.CTkLabel(
+            self, text=badge_key,
+            width=34, height=34,
+            corner_radius=4,
+            fg_color=bg, text_color=fg,
+            font=theme.font(9, "bold", mono=True),
         )
-        self._copy_btn.pack(side="right", padx=(4, 2), pady=2)
+        self._badge.grid(row=0, column=0, rowspan=2, padx=(8, 8), pady=6, sticky="w")
 
-        # File label
-        self._label = ctk.CTkLabel(
-            self,
-            text=f"[{tag}]  {path.name}",
-            font=ctk.CTkFont(family="Consolas", size=11),
+        self._name_lbl = ctk.CTkLabel(
+            self, text=path.name,
+            font=theme.font(12, "normal"),
+            text_color=theme.INK,
             anchor="w",
         )
-        self._label.pack(side="left", fill="x", expand=True, padx=(4, 0), pady=2)
+        self._name_lbl.grid(row=0, column=1, sticky="ew", pady=(8, 0))
 
-        self.bind("<Button-1>", self._handle_select)
-        self._label.bind("<Button-1>", self._handle_select)
-        self._copy_btn.bind("<Button-1>", self._handle_select, add="+")
-        self.bind("<Double-Button-1>", self._handle_open)
-        self._label.bind("<Double-Button-1>", self._handle_open)
-
-    def set_selected(self, selected: bool) -> None:
-        self.configure(fg_color=("#d9ebff", "#1f3a5a") if selected else "transparent")
-
-    def enable_copy(self, md_path: Path) -> None:
-        self._md_path = md_path
-        self._copy_btn.configure(
-            state="normal",
-            border_color=("gray50", "gray60"),
+        self._meta_lbl = ctk.CTkLabel(
+            self, text=self._meta_text(),
+            font=theme.font(10, mono=True),
+            text_color=theme.INK_3,
+            anchor="w",
         )
+        self._meta_lbl.grid(row=1, column=1, sticky="ew", pady=(0, 8))
 
-    def disable_copy(self) -> None:
-        self._md_path = None
-        self._copy_btn.configure(state="disabled", border_color="gray40")
+        self._status_lbl = ctk.CTkLabel(
+            self, text="",
+            corner_radius=10,
+            font=theme.font(10, "bold"),
+        )
+        self._status_lbl.grid(row=0, column=2, rowspan=2, padx=(6, 8))
+        self._render_status()
 
-    def _copy_to_clipboard(self) -> None:
-        if not self._md_path or not self._md_path.exists():
-            return
+        for w in (self, self._badge, self._name_lbl, self._meta_lbl, self._status_lbl):
+            w.bind("<Button-1>", self._handle_select)
+            w.bind("<Double-Button-1>", self._handle_open)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def _meta_text(self) -> str:
+        bits = []
         try:
-            content = self._md_path.read_text(encoding="utf-8")
-            root = self.winfo_toplevel()
-            root.clipboard_clear()
-            root.clipboard_append(content)
+            bits.append(_format_size(self._path.stat().st_size))
         except Exception:
             pass
+        ext = self._path.suffix.lower()
+        if ext == ".pdf":
+            pages = _count_pdf_pages(self._path)
+            if pages is not None:
+                bits.append(f"{pages} pag.")
+        if self._cost > 0:
+            bits.append(f"${self._cost:.4f}")
+        return "  ·  ".join(bits)
 
-    def _handle_select(self, _event=None):
+    def _render_status(self):
+        labels = {
+            "queue": "in coda",
+            "run":   "OCR…",
+            "ok":    "✓ pronto",
+            "warn":  "⚠ avviso",
+            "err":   "✕ errore",
+        }
+        bg, border, fg = theme.STATUS_COLORS[self._status]
+        self._status_lbl.configure(
+            text=labels[self._status],
+            fg_color=bg, text_color=fg,
+            width=68 if self._status != "run" else 60,
+            height=20,
+        )
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        if selected:
+            self.configure(fg_color=theme.CARD, border_width=1, border_color=theme.AMBER)
+        else:
+            self.configure(fg_color="transparent", border_width=0)
+
+    def set_status(self, status: str):
+        if status not in theme.STATUS_COLORS:
+            status = "queue"
+        self._status = status
+        self._render_status()
+
+    def set_cost(self, cost: float):
+        self._cost = cost
+        self._meta_lbl.configure(text=self._meta_text())
+
+    def enable_copy(self, md_path: Path):
+        self._md_path = md_path
+        self.set_status("ok")
+
+    def disable_copy(self):
+        self._md_path = None
+
+    @property
+    def md_path(self) -> Path | None:
+        return self._md_path
+
+    def _handle_select(self, _e=None):
         self.focus_set()
         self._on_select(self._path)
 
-    def _handle_open(self, _event=None):
+    def _handle_open(self, _e=None):
         self._on_open(self._path)
         return "break"
 
 
 class InputFrame(ctk.CTkFrame):
-    """File selection panel with list of selected documents."""
+    """Sidebar: dropzone + actions + scrollable file list + footer counts."""
 
-    def __init__(
-        self,
-        master,
-        on_files_changed: callable = None,
-        on_selection_changed: callable = None,
-        on_open_requested: callable = None,
-        **kwargs,
-    ):
-        super().__init__(master, **kwargs)
+    def __init__(self, master, on_files_changed=None, on_selection_changed=None,
+                 on_open_requested=None, **kwargs):
+        super().__init__(master, fg_color=theme.PAPER, corner_radius=0,
+                         border_width=0, **kwargs)
         self.on_files_changed = on_files_changed
         self.on_selection_changed = on_selection_changed
         self.on_open_requested = on_open_requested
+
         self._file_paths: list[Path] = []
         self._rows: dict[Path, _FileRow] = {}
         self._selected_path: Path | None = None
         self._clipboard_paths: set[Path] = set()
 
-        # ── Header ───────────────────────────────────────────────────────────
-        ctk.CTkLabel(
-            self,
-            text="DOCUMENTI",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="gray60",
-        ).pack(padx=12, pady=(10, 2), anchor="w")
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            self,
-            text="Trascina qui i file, oppure usa i pulsanti",
-            font=ctk.CTkFont(size=11),
-            text_color="gray50",
-        ).pack(padx=12, pady=(0, 6), anchor="w")
+        # ── Header / dropzone ─────────────────────────────────────────────
+        head = ctk.CTkFrame(self, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=14, pady=(12, 6))
+        theme.section_label(head, "Documenti").pack(anchor="w", pady=(0, 6))
 
-        # ── Buttons ──────────────────────────────────────────────────────────
+        self.dropzone = ctk.CTkFrame(
+            head, fg_color=theme.CARD,
+            border_width=1, border_color=theme.RULE_STRONG,
+            corner_radius=8, height=68,
+        )
+        self.dropzone.pack(fill="x")
+        self.dropzone.pack_propagate(False)
+
+        self.dropzone_title = ctk.CTkLabel(
+            self.dropzone, text="Trascina i file qui",
+            font=theme.font(12, "bold"), text_color=theme.INK,
+        )
+        self.dropzone_title.pack(pady=(12, 0))
+        ctk.CTkLabel(
+            self.dropzone,
+            text="PDF · immagini · DOCX · audio · email · archivi",
+            font=theme.font(10), text_color=theme.INK_3,
+        ).pack(pady=(2, 12))
+
+        # ── Action buttons ────────────────────────────────────────────────
         btn_row = ctk.CTkFrame(self, fg_color="transparent")
-        btn_row.pack(padx=12, pady=(0, 6), fill="x")
+        btn_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(2, 8))
 
-        self.add_files_btn = ctk.CTkButton(
-            btn_row, text="Aggiungi file",
-            command=self._select_files, width=110,
+        self.add_files_btn = theme.ghost_button(
+            btn_row, "Aggiungi file", command=self._select_files, height=30,
         )
-        self.add_files_btn.pack(side="left", padx=(0, 5))
+        self.add_files_btn.pack(side="left", padx=(0, 5), fill="x", expand=True)
 
-        self.add_folder_btn = ctk.CTkButton(
-            btn_row, text="Cartella…",
-            command=self._select_folder, width=90,
+        self.add_folder_btn = theme.ghost_button(
+            btn_row, "Cartella", command=self._select_folder, height=30,
         )
-        self.add_folder_btn.pack(side="left", padx=(0, 5))
+        self.add_folder_btn.pack(side="left", padx=(0, 5), fill="x", expand=True)
 
-        self.paste_text_btn = ctk.CTkButton(
-            btn_row, text="Incolla Appunti",
-            command=self._paste_text, width=110,
+        self.paste_text_btn = theme.ghost_button(
+            btn_row, "Appunti", command=self._paste_text, height=30,
         )
-        self.paste_text_btn.pack(side="left", padx=(0, 5))
+        self.paste_text_btn.pack(side="left", fill="x", expand=True)
 
-        self.clear_btn = ctk.CTkButton(
-            btn_row, text="Svuota",
-            command=self._clear_files, width=70,
-            fg_color="transparent",
-            border_width=1,
+        # ── File list (scrollable) ────────────────────────────────────────
+        list_wrap = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0)
+        list_wrap.grid(row=2, column=0, sticky="nsew", padx=8, pady=0)
+        list_wrap.grid_rowconfigure(0, weight=1)
+        list_wrap.grid_columnconfigure(0, weight=1)
+
+        self.file_list = ctk.CTkScrollableFrame(
+            list_wrap,
+            fg_color=theme.PAPER,
+            scrollbar_button_color=theme.RULE_STRONG,
+            scrollbar_button_hover_color=theme.INK_3,
+            corner_radius=0,
+        )
+        self.file_list.grid(row=0, column=0, sticky="nsew")
+
+        self._empty_lbl = ctk.CTkLabel(
+            self.file_list,
+            text="Nessun documento.\nTrascina qui i file o usa i pulsanti.",
+            font=theme.font(11), text_color=theme.INK_4, justify="center",
+        )
+        self._empty_lbl.pack(pady=40)
+
+        # ── Footer ────────────────────────────────────────────────────────
+        footer = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
+                              height=64)
+        footer.grid(row=3, column=0, sticky="ew")
+        theme.hairline(footer).pack(fill="x", side="top")
+
+        inner = ctk.CTkFrame(footer, fg_color="transparent")
+        inner.pack(fill="x", padx=14, pady=10)
+
+        self.count_label = ctk.CTkLabel(
+            inner, text="Nessun documento selezionato",
+            font=theme.font(11, mono=True), text_color=theme.INK_3, anchor="w",
+        )
+        self.count_label.pack(side="left", fill="x", expand=True)
+
+        self.clear_btn = theme.ghost_button(
+            inner, "Svuota lista", command=self._clear_files, width=110, height=26,
         )
         self.clear_btn.pack(side="right")
 
-        # ── File list (scrollable rows) ───────────────────────────────────────
-        self.file_list = ctk.CTkScrollableFrame(
-            self,
-            fg_color=("gray92", "gray14"),
-            corner_radius=6,
-            scrollbar_button_color=("gray70", "gray35"),
-        )
-        self.file_list.pack(padx=12, pady=(0, 4), fill="both", expand=True)
-
-        # ── Count ─────────────────────────────────────────────────────────────
-        self.count_label = ctk.CTkLabel(
-            self, text="Nessun documento selezionato",
-            font=ctk.CTkFont(size=11),
-            text_color="gray50",
-        )
-        self.count_label.pack(padx=12, pady=(0, 8), anchor="w")
-
-    # ─── File selection ───────────────────────────────────────────────────────
-
-    def _select_files(self) -> None:
+    # ─── Selection helpers ────────────────────────────────────────────────
+    def _select_files(self):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
@@ -237,7 +296,7 @@ class InputFrame(ctk.CTkFrame):
                     self._file_paths.append(path)
             self._refresh_list()
 
-    def _select_folder(self) -> None:
+    def _select_folder(self):
         folder = filedialog.askdirectory(title="Seleziona cartella")
         if folder:
             folder_path = Path(folder)
@@ -249,25 +308,30 @@ class InputFrame(ctk.CTkFrame):
                     self._file_paths.append(f)
             self._refresh_list()
 
-    def _clear_files(self) -> None:
+    def _clear_files(self):
         self._file_paths.clear()
         self._refresh_list()
 
-    def _refresh_list(self) -> None:
-        # Destroy all existing row widgets
-        for widget in self.file_list.winfo_children():
-            widget.destroy()
+    def _refresh_list(self):
+        for w in self.file_list.winfo_children():
+            w.destroy()
         self._rows.clear()
 
-        for path in self._file_paths:
-            row = _FileRow(
+        if not self._file_paths:
+            self._empty_lbl = ctk.CTkLabel(
                 self.file_list,
-                path,
-                on_select=self.select_path,
-                on_open=self._open_path,
+                text="Nessun documento.\nTrascina qui i file o usa i pulsanti.",
+                font=theme.font(11), text_color=theme.INK_4, justify="center",
             )
-            self._rows[path] = row
-            row.set_selected(path == self._selected_path)
+            self._empty_lbl.pack(pady=40)
+        else:
+            for path in self._file_paths:
+                row = _FileRow(self.file_list, path,
+                               on_select=self.select_path,
+                               on_open=self._open_path)
+                row.pack(fill="x", padx=2, pady=1)
+                self._rows[path] = row
+                row.set_selected(path == self._selected_path)
 
         if self._selected_path not in self._file_paths:
             self._selected_path = None
@@ -276,62 +340,51 @@ class InputFrame(ctk.CTkFrame):
         if n == 0:
             self.count_label.configure(text="Nessun documento selezionato")
         elif n == 1:
-            self.count_label.configure(text="1 documento selezionato")
+            self.count_label.configure(text="1 documento")
         else:
-            self.count_label.configure(text=f"{n} documenti selezionati")
+            self.count_label.configure(text=f"{n} documenti")
 
         if self.on_files_changed:
             self.on_files_changed(self._file_paths)
 
-    def _paste_text(self) -> None:
-        """Legge il testo dagli appunti e crea un file di testo temporaneo."""
+    def _paste_text(self):
         try:
-            clipboard_text = self.master.clipboard_get()
-            if not clipboard_text or not clipboard_text.strip():
+            text = self.master.clipboard_get()
+            if not text or not text.strip():
                 return
-
-            import time
-            import tempfile
-
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            temp_dir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
-            temp_dir.mkdir(exist_ok=True, parents=True)
-
-            temp_file = temp_dir / f"Appunti_{timestamp}.txt"
-            temp_file.write_text(clipboard_text, encoding="utf-8")
-
-            if temp_file not in self._file_paths:
-                self._file_paths.append(temp_file)
-                self._clipboard_paths.add(temp_file)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            tdir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
+            tdir.mkdir(exist_ok=True, parents=True)
+            tfile = tdir / f"Appunti_{ts}.txt"
+            tfile.write_text(text, encoding="utf-8")
+            if tfile not in self._file_paths:
+                self._file_paths.append(tfile)
+                self._clipboard_paths.add(tfile)
             self._refresh_list()
-            self.select_path(temp_file)
-
+            self.select_path(tfile)
         except Exception:
             pass
 
-    # ─── Public API ──────────────────────────────────────────────────────────
-
+    # ─── Public API (kept compatible) ─────────────────────────────────────
     def get_file_paths(self) -> list[Path]:
         return list(self._file_paths)
+
+    def get_pdf_paths(self) -> list[Path]:
+        return self.get_file_paths()
 
     def get_selected_path(self) -> Path | None:
         return self._selected_path
 
-    def get_pdf_paths(self) -> list[Path]:
-        """Alias for backward compatibility."""
-        return self.get_file_paths()
-
-    def add_paths(self, paths: list[Path]) -> None:
-        """Add file paths (e.g. from drag & drop). Skips unsupported formats and duplicates."""
+    def add_paths(self, paths: list[Path]):
         for path in paths:
             path = Path(path)
             if path.is_dir():
-                candidates = []
+                cands = []
                 for ext in SUPPORTED_EXTENSIONS:
-                    candidates.extend(path.glob(f"*{ext}"))
-                for candidate in sorted(candidates):
-                    if candidate not in self._file_paths:
-                        self._file_paths.append(candidate)
+                    cands.extend(path.glob(f"*{ext}"))
+                for c in sorted(cands):
+                    if c not in self._file_paths:
+                        self._file_paths.append(c)
                 continue
             if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
@@ -341,62 +394,66 @@ class InputFrame(ctk.CTkFrame):
         if paths and self._selected_path is None and self._file_paths:
             self.select_path(self._file_paths[-1])
 
-    def set_enabled(self, enabled: bool) -> None:
+    def set_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
-        self.add_files_btn.configure(state=state)
-        self.add_folder_btn.configure(state=state)
-        self.paste_text_btn.configure(state=state)
-        self.clear_btn.configure(state=state)
+        for b in (self.add_files_btn, self.add_folder_btn,
+                  self.paste_text_btn, self.clear_btn):
+            b.configure(state=state)
 
-    def set_md_for_file(self, input_path: Path, md_path: Path) -> None:
-        """Enable the copy button for a specific input file after conversion."""
+    def set_md_for_file(self, input_path: Path, md_path: Path):
         row = self._rows.get(input_path)
         if row:
             row.enable_copy(md_path)
 
-    def replace_path(self, old_path: Path, new_path: Path) -> None:
-        """Replace a listed input path after the underlying file is renamed."""
-        old_path = Path(old_path)
-        new_path = Path(new_path)
+    def set_status_for_file(self, input_path: Path, status: str):
+        row = self._rows.get(input_path)
+        if row:
+            row.set_status(status)
+
+    def set_cost_for_file(self, input_path: Path, cost: float):
+        row = self._rows.get(input_path)
+        if row:
+            row.set_cost(cost)
+
+    def replace_path(self, old: Path, new: Path):
+        old, new = Path(old), Path(new)
         try:
-            index = self._file_paths.index(old_path)
+            i = self._file_paths.index(old)
         except ValueError:
             return
-
-        self._file_paths[index] = new_path
-        if old_path in self._clipboard_paths:
-            self._clipboard_paths.remove(old_path)
-            self._clipboard_paths.add(new_path)
-
-        was_selected = self._selected_path == old_path
-        if was_selected:
-            self._selected_path = new_path
-
+        self._file_paths[i] = new
+        if old in self._clipboard_paths:
+            self._clipboard_paths.remove(old)
+            self._clipboard_paths.add(new)
+        was_sel = self._selected_path == old
+        if was_sel:
+            self._selected_path = new
         self._refresh_list()
-        if was_selected:
-            self.select_path(new_path)
+        if was_sel:
+            self.select_path(new)
 
-    def reset_copy_buttons(self) -> None:
-        """Disable all per-file copy buttons (call at start of a new batch)."""
+    def reset_copy_buttons(self):
         for row in self._rows.values():
             row.disable_copy()
+            row.set_status("queue")
+            row.set_cost(0.0)
 
-    def select_path(self, path: Path | None) -> None:
+    def select_path(self, path: Path | None):
         if path is not None and path not in self._file_paths:
             return
         self._selected_path = path
-        for row_path, row in self._rows.items():
-            row.set_selected(row_path == path)
+        for p, row in self._rows.items():
+            row.set_selected(p == path)
         if self.on_selection_changed:
             self.on_selection_changed(path)
 
-    def remove_selected(self) -> None:
+    def remove_selected(self):
         if not self._selected_path:
             return
-        path = self._selected_path
-        if path in self._file_paths:
-            self._file_paths.remove(path)
-        self._clipboard_paths.discard(path)
+        p = self._selected_path
+        if p in self._file_paths:
+            self._file_paths.remove(p)
+        self._clipboard_paths.discard(p)
         self._selected_path = None
         self._refresh_list()
         if self.on_selection_changed:
@@ -411,11 +468,22 @@ class InputFrame(ctk.CTkFrame):
         except Exception:
             return False
 
-    def handle_delete_key(self, event=None):
+    def handle_delete_key(self, _e=None):
         self.remove_selected()
         return "break"
 
-    def _open_path(self, path: Path) -> None:
+    def get_rows(self):
+        """Return [(path, status, cost), ...] in display order — used by cost chart."""
+        out = []
+        for p in self._file_paths:
+            row = self._rows.get(p)
+            if row:
+                out.append((p, row._status, row._cost))
+            else:
+                out.append((p, "queue", 0.0))
+        return out
+
+    def _open_path(self, path: Path):
         self.select_path(path)
         if self.on_open_requested:
             self.on_open_requested(path, self.is_clipboard_path(path))
@@ -423,12 +491,12 @@ class InputFrame(ctk.CTkFrame):
         self._open_with_default_app(path)
 
     @staticmethod
-    def _open_with_default_app(path: Path) -> None:
+    def _open_with_default_app(path: Path):
         if not path.exists():
             return
         if sys.platform == "win32":
             import os
-            os.startfile(path)  # type: ignore[attr-defined]
+            os.startfile(path)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(path)])
         else:

@@ -1,16 +1,18 @@
-"""Output preview frame."""
+"""Output preview frame — paper-themed, single Markdown view + actions."""
 
+from __future__ import annotations
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import font as tkfont
 from pathlib import Path
 from tkinter import filedialog
+from tkinter import font as tkfont
 
 import customtkinter as ctk
 
+from gui import theme
+
 _MERGE_EXTENSIONS = (".md", ".markdown")
-_PREVIEW_TAB_NAME = "Apri editor Markdown"
 
 
 class MarkdownEditorWindow(ctk.CTkToplevel):
@@ -18,10 +20,14 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
 
     def __init__(self, master, md_path: Path, on_saved: callable | None = None):
         super().__init__(master)
-        self.title(f"Anteprima Markdown - {md_path.name}")
-        self.geometry("920x720")
+        self.title(f"Anteprima Markdown — {md_path.name}")
+        self.geometry("960x740")
         self.minsize(720, 520)
         self.transient(master)
+        try:
+            self.configure(fg_color=theme.PAPER)
+        except Exception:
+            pass
 
         self.md_path = md_path
         self.on_saved = on_saved
@@ -29,67 +35,48 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self._highlight_after_id: str | None = None
 
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(padx=14, pady=(12, 6), fill="x")
+        header.pack(padx=18, pady=(14, 6), fill="x")
 
         ctk.CTkLabel(
-            header,
-            text=md_path.name,
-            font=ctk.CTkFont(size=16, weight="bold"),
+            header, text=md_path.name,
+            font=theme.font(15, "bold"), text_color=theme.INK,
         ).pack(side="left", fill="x", expand=True, anchor="w")
 
         self.status_label = ctk.CTkLabel(
-            header,
-            text="Salvato",
-            font=ctk.CTkFont(size=11),
-            text_color="gray55",
+            header, text="Salvato",
+            font=theme.font(11), text_color=theme.INK_3,
         )
         self.status_label.pack(side="right")
 
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
-        toolbar.pack(padx=14, pady=(0, 8), fill="x")
+        toolbar.pack(padx=18, pady=(0, 8), fill="x")
 
-        ctk.CTkButton(
-            toolbar,
-            text="B",
-            width=34,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            command=lambda: self._wrap_selection("**", "**"),
-        ).pack(side="left", padx=(0, 6))
+        for label, weight, prefix, suffix in (
+            ("B", "bold",   "**",  "**"),
+            ("I", "italic", "*",   "*"),
+            ("U", "under",  "<u>", "</u>"),
+        ):
+            btn = theme.ghost_button(
+                toolbar, label,
+                width=32, height=28,
+                command=lambda p=prefix, s=suffix: self._wrap_selection(p, s),
+            )
+            btn.pack(side="left", padx=(0, 4))
 
-        ctk.CTkButton(
-            toolbar,
-            text="I",
-            width=34,
-            font=ctk.CTkFont(size=13, slant="italic"),
-            fg_color="transparent",
-            border_width=1,
-            command=lambda: self._wrap_selection("*", "*"),
-        ).pack(side="left", padx=(0, 6))
-
-        ctk.CTkButton(
-            toolbar,
-            text="U",
-            width=34,
-            font=ctk.CTkFont(size=13, underline=True),
-            fg_color="transparent",
-            border_width=1,
-            command=lambda: self._wrap_selection("<u>", "</u>"),
-        ).pack(side="left")
-
-        body = ctk.CTkFrame(self)
-        body.pack(padx=14, pady=(0, 14), fill="both", expand=True)
+        body = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=8,
+                            border_width=1, border_color=theme.RULE)
+        body.pack(padx=18, pady=(0, 14), fill="both", expand=True)
 
         self.text = tk.Text(
-            body,
-            wrap="word",
-            undo=True,
-            padx=14,
-            pady=12,
-            borderwidth=0,
-            highlightthickness=0,
-            font=("Segoe UI", 11),
+            body, wrap="word", undo=True,
+            padx=18, pady=14,
+            borderwidth=0, highlightthickness=0,
+            bg=theme.CARD, fg=theme.INK,
+            insertbackground=theme.INK,
+            font=(theme.ui_family(), 12),
         )
-        scrollbar = ctk.CTkScrollbar(body, command=self.text.yview)
+        scrollbar = ctk.CTkScrollbar(body, command=self.text.yview,
+                                     button_color=theme.RULE_STRONG)
         self.text.configure(yscrollcommand=scrollbar.set)
         self.text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -101,24 +88,19 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
 
     def _configure_tags(self) -> None:
         base = tkfont.Font(font=self.text["font"])
-        h1 = base.copy()
-        h1.configure(size=18, weight="bold")
-        h2 = base.copy()
-        h2.configure(size=15, weight="bold")
-        bold = base.copy()
-        bold.configure(weight="bold")
-        mono = tkfont.Font(family="Consolas", size=10)
+        h1 = base.copy(); h1.configure(size=20, weight="bold")
+        h2 = base.copy(); h2.configure(size=16, weight="bold")
+        bold = base.copy(); bold.configure(weight="bold")
+        italic = base.copy(); italic.configure(slant="italic")
+        underline = base.copy(); underline.configure(underline=True)
+        mono = tkfont.Font(family=theme.mono_family(), size=10)
 
-        self.text.tag_configure("h1", font=h1, spacing1=10, spacing3=6)
+        self.text.tag_configure("h1", font=h1, spacing1=12, spacing3=6)
         self.text.tag_configure("h2", font=h2, spacing1=8, spacing3=4)
         self.text.tag_configure("bold", font=bold)
-        italic = base.copy()
-        italic.configure(slant="italic")
-        underline = base.copy()
-        underline.configure(underline=True)
         self.text.tag_configure("italic", font=italic)
         self.text.tag_configure("underline", font=underline)
-        self.text.tag_configure("code", font=mono, background="#eeeeee")
+        self.text.tag_configure("code", font=mono, background=theme.PAPER_2)
 
     def _load_file(self) -> None:
         try:
@@ -129,11 +111,11 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.text.edit_modified(False)
         self._apply_markdown_tags()
 
-    def _on_modified(self, _event=None) -> None:
+    def _on_modified(self, _e=None) -> None:
         if not self.text.edit_modified():
             return
         self.text.edit_modified(False)
-        self.status_label.configure(text="Modificato...")
+        self.status_label.configure(text="Modificato…")
         if self._save_after_id:
             self.after_cancel(self._save_after_id)
         if self._highlight_after_id:
@@ -165,11 +147,8 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             self.text.delete(start, end)
             self.text.insert(start, f"{prefix}{selected}{suffix}")
             self.text.tag_remove("sel", "1.0", "end")
-            self.text.tag_add(
-                "sel",
-                f"{start}+{len(prefix)}c",
-                f"{start}+{len(prefix) + len(selected)}c",
-            )
+            self.text.tag_add("sel", f"{start}+{len(prefix)}c",
+                              f"{start}+{len(prefix) + len(selected)}c")
         self.text.focus_set()
         self.text.edit_modified(True)
         self._on_modified()
@@ -183,7 +162,7 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         line_count = int(self.text.index("end-1c").split(".")[0])
         for line_no in range(1, line_count + 1):
             line_start = f"{line_no}.0"
-            line_end = f"{line_no}.end"
+            line_end   = f"{line_no}.end"
             line = self.text.get(line_start, line_end)
             if line.startswith("# "):
                 self.text.tag_add("h1", line_start, line_end)
@@ -193,36 +172,30 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             search_from = line_start
             while True:
                 start = self.text.search("**", search_from, line_end)
-                if not start:
-                    break
+                if not start: break
                 end = self.text.search("**", f"{start}+2c", line_end)
-                if not end:
-                    break
+                if not end: break
                 self.text.tag_add("bold", f"{start}+2c", end)
                 search_from = f"{end}+2c"
 
             search_from = line_start
             while True:
                 start = self.text.search("<u>", search_from, line_end)
-                if not start:
-                    break
+                if not start: break
                 end = self.text.search("</u>", f"{start}+3c", line_end)
-                if not end:
-                    break
+                if not end: break
                 self.text.tag_add("underline", f"{start}+3c", end)
                 search_from = f"{end}+4c"
 
             search_from = line_start
             while True:
                 start = self.text.search("*", search_from, line_end)
-                if not start:
-                    break
+                if not start: break
                 if self.text.get(start, f"{start}+2c") == "**":
                     search_from = f"{start}+2c"
                     continue
                 end = self.text.search("*", f"{start}+1c", line_end)
-                if not end:
-                    break
+                if not end: break
                 if self.text.get(end, f"{end}+2c") == "**":
                     search_from = f"{end}+2c"
                     continue
@@ -232,11 +205,9 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             search_from = line_start
             while True:
                 start = self.text.search("`", search_from, line_end)
-                if not start:
-                    break
+                if not start: break
                 end = self.text.search("`", f"{start}+1c", line_end)
-                if not end:
-                    break
+                if not end: break
                 self.text.tag_add("code", start, f"{end}+1c")
                 search_from = f"{end}+1c"
 
@@ -250,158 +221,175 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
 
 
 class OutputFrame(ctk.CTkFrame):
-    """Results preview with output actions."""
+    """Markdown preview canvas + small action toolbar above it."""
 
     def __init__(self, master, actions_parent=None, **kwargs):
-        super().__init__(master, **kwargs)
+        super().__init__(master, fg_color=theme.PAPER, corner_radius=0,
+                         border_width=0, **kwargs)
         self._output_dir: Path | None = None
         self._all_md_paths: list[Path] = []
         self._current_md_path: Path | None = None
         self._editor_window: MarkdownEditorWindow | None = None
-        self._suppress_tab_command = False
-
-        # ── Preview tab ───────────────────────────────────────────────────────
-        self.tabview = ctk.CTkTabview(self)
-        self.tabview.pack(padx=10, pady=(10, 4), fill="both", expand=True)
-
-        self.tab_md = self.tabview.add(_PREVIEW_TAB_NAME)
-
-        self.md_textbox = ctk.CTkTextbox(
-            self.tab_md,
-            font=ctk.CTkFont(family="Consolas", size=11),
-        )
-        self.md_textbox.pack(fill="both", expand=True)
-        self.md_textbox.configure(state="disabled")
-        self._bind_preview_tab()
-
         self._merge_items: list[dict[str, object]] = []
         self._merge_path_keys: set[Path] = set()
+        self._merge_window: ctk.CTkToplevel | None = None
 
-        self.merge_frame = ctk.CTkFrame(self, fg_color=("gray92", "gray14"), corner_radius=6)
-        self.merge_frame.pack(padx=10, pady=(0, 6), fill="x")
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
-        merge_header = ctk.CTkFrame(self.merge_frame, fg_color="transparent")
-        merge_header.pack(padx=10, pady=(8, 4), fill="x")
+        # ── Toolbar ───────────────────────────────────────────────────────
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 8))
 
-        ctk.CTkLabel(
-            merge_header,
-            text="MERGE MARKDOWN",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="gray60",
-        ).pack(side="left")
-
-        self.merge_count_label = ctk.CTkLabel(
-            merge_header,
-            text="0 file",
-            font=ctk.CTkFont(size=11),
-            text_color="gray55",
+        self.title_lbl = ctk.CTkLabel(
+            toolbar, text="Nessuna anteprima",
+            font=theme.font(13, "bold"), text_color=theme.INK,
+            anchor="w",
         )
-        self.merge_count_label.pack(side="right")
+        self.title_lbl.pack(side="left", fill="x", expand=True)
 
-        self.merge_drop_box = ctk.CTkTextbox(
-            self.merge_frame,
-            height=58,
-            font=ctk.CTkFont(family="Consolas", size=10),
-            wrap="word",
+        self.editor_btn = theme.ghost_button(
+            toolbar, "Apri editor", width=110, height=28,
+            command=self.open_markdown_preview,
         )
-        self.merge_drop_box.pack(padx=10, pady=(0, 6), fill="x")
-        self.merge_drop_box.bind("<Control-v>", self._paste_merge_from_clipboard)
-        self.merge_drop_box.bind("<Command-v>", self._paste_merge_from_clipboard)
+        self.editor_btn.pack(side="right", padx=(6, 0))
 
-        merge_actions = ctk.CTkFrame(self.merge_frame, fg_color="transparent")
-        merge_actions.pack(padx=10, pady=(0, 8), fill="x")
-
-        self.merge_paste_btn = ctk.CTkButton(
-            merge_actions,
-            text="Incolla",
-            command=self._paste_merge_from_clipboard,
-            width=82,
-            fg_color="transparent",
-            border_width=1,
+        self.copy_btn = theme.ghost_button(
+            toolbar, "Copia", width=80, height=28,
+            command=self._copy_current,
         )
-        self.merge_paste_btn.pack(side="left")
+        self.copy_btn.pack(side="right")
 
-        self.merge_clear_btn = ctk.CTkButton(
-            merge_actions,
-            text="Svuota",
-            command=self._clear_merge_items,
-            width=78,
-            fg_color="transparent",
-            border_width=1,
+        self.merge_btn = theme.ghost_button(
+            toolbar, "Merge MD", width=90, height=28,
+            command=self._open_merge_dialog,
+        )
+        self.merge_btn.pack(side="right", padx=(0, 6))
+
+        # ── Preview body ──────────────────────────────────────────────────
+        body = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=8,
+                            border_width=1, border_color=theme.RULE)
+        body.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 12))
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)
+
+        self.md_textbox = tk.Text(
+            body, wrap="word",
+            bg=theme.CARD, fg=theme.INK_2,
+            insertbackground=theme.INK,
+            relief="flat", bd=0, highlightthickness=0,
+            padx=22, pady=18,
+            font=(theme.ui_family(), 12),
             state="disabled",
         )
-        self.merge_clear_btn.pack(side="left", padx=(6, 0))
+        self.md_textbox.grid(row=0, column=0, sticky="nsew")
 
-        self.merge_copy_btn = ctk.CTkButton(
-            merge_actions,
-            text="Copia merge",
-            command=self._copy_merge_md,
-            width=112,
-            state="disabled",
-        )
-        self.merge_copy_btn.pack(side="right")
+        sb = ctk.CTkScrollbar(body, command=self.md_textbox.yview,
+                              button_color=theme.RULE_STRONG)
+        sb.grid(row=0, column=1, sticky="ns")
+        self.md_textbox.configure(yscrollcommand=sb.set)
 
-        self.merge_save_btn = ctk.CTkButton(
-            merge_actions,
-            text="Salva merge...",
-            command=self._export_merge_md,
-            width=118,
-            fg_color="transparent",
-            border_width=1,
-            state="disabled",
-        )
-        self.merge_save_btn.pack(side="right", padx=(0, 6))
+        self._setup_md_tags()
 
-        self._refresh_merge_box()
-
-        # ── Action buttons row ────────────────────────────────────────────────
+        # ── Actions row (mounted into actions_parent if given) ────────────
         action_row = actions_parent or ctk.CTkFrame(self, fg_color="transparent")
         if actions_parent is None:
-            action_row.pack(padx=10, pady=(0, 8), fill="x")
+            action_row.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 12))
 
-        self.open_folder_btn = ctk.CTkButton(
-            action_row,
-            text="Apri cartella output",
-            command=self._open_output_folder,
-            state="disabled",
-            width=160,
+        self.open_folder_btn = theme.ghost_button(
+            action_row, "Apri cartella output",
+            command=self._open_output_folder, state="disabled",
+            width=160, height=28,
         )
         self.open_folder_btn.pack(side="left")
 
-        self.copy_all_btn = ctk.CTkButton(
-            action_row,
-            text="⎘  Copia tutti",
-            command=self._copy_all_md,
-            state="disabled",
-            width=120,
-            fg_color="transparent",
-            border_width=1,
+        self.copy_all_btn = theme.ghost_button(
+            action_row, "Copia tutti",
+            command=self._copy_all_md, state="disabled",
+            width=100, height=28,
         )
-        self.copy_all_btn.pack(side="left", padx=(8, 0))
+        self.copy_all_btn.pack(side="left", padx=(6, 0))
 
-        self.export_all_btn = ctk.CTkButton(
-            action_row,
-            text="↓  Salva unito…",
-            command=self._export_all_md,
-            state="disabled",
-            width=130,
-            fg_color="transparent",
-            border_width=1,
+        self.export_all_btn = theme.ghost_button(
+            action_row, "Salva unito…",
+            command=self._export_all_md, state="disabled",
+            width=110, height=28,
         )
         self.export_all_btn.pack(side="left", padx=(6, 0))
 
-    # ─── Public API ──────────────────────────────────────────────────────────
+        # Compat shims (referenced by app.py drag-drop registration)
+        self.tabview = self
+        self.merge_frame = self
+        self.merge_drop_box = self.md_textbox
 
+        self.clear_preview()
+
+    # ─── Markdown tag setup for inline preview ────────────────────────────
+    def _setup_md_tags(self):
+        base = tkfont.Font(font=self.md_textbox["font"])
+        h1 = base.copy(); h1.configure(size=20, weight="bold")
+        h2 = base.copy(); h2.configure(size=16, weight="bold")
+        h3 = base.copy(); h3.configure(size=13, weight="bold")
+        bold = base.copy(); bold.configure(weight="bold")
+        italic = base.copy(); italic.configure(slant="italic")
+        mono = tkfont.Font(family=theme.mono_family(), size=10)
+
+        self.md_textbox.tag_configure("h1", font=h1, foreground=theme.INK,
+                                      spacing1=12, spacing3=6)
+        self.md_textbox.tag_configure("h2", font=h2, foreground=theme.INK,
+                                      spacing1=10, spacing3=4)
+        self.md_textbox.tag_configure("h3", font=h3, foreground=theme.INK,
+                                      spacing1=8, spacing3=3)
+        self.md_textbox.tag_configure("bold", font=bold, foreground=theme.INK)
+        self.md_textbox.tag_configure("italic", font=italic)
+        self.md_textbox.tag_configure("code", font=mono, background=theme.PAPER_2,
+                                      foreground=theme.INK)
+        self.md_textbox.tag_configure("placeholder",
+                                      foreground=theme.INK_4, justify="center")
+
+    def _apply_md_tags(self):
+        for tag in ("h1", "h2", "h3", "bold", "italic", "code"):
+            self.md_textbox.tag_remove(tag, "1.0", "end")
+
+        line_count = int(self.md_textbox.index("end-1c").split(".")[0])
+        for line_no in range(1, line_count + 1):
+            ls, le = f"{line_no}.0", f"{line_no}.end"
+            line = self.md_textbox.get(ls, le)
+            if line.startswith("### "):
+                self.md_textbox.tag_add("h3", ls, le)
+            elif line.startswith("## "):
+                self.md_textbox.tag_add("h2", ls, le)
+            elif line.startswith("# "):
+                self.md_textbox.tag_add("h1", ls, le)
+
+            search = ls
+            while True:
+                s = self.md_textbox.search("**", search, le)
+                if not s: break
+                e = self.md_textbox.search("**", f"{s}+2c", le)
+                if not e: break
+                self.md_textbox.tag_add("bold", f"{s}+2c", e)
+                search = f"{e}+2c"
+
+            search = ls
+            while True:
+                s = self.md_textbox.search("`", search, le)
+                if not s: break
+                e = self.md_textbox.search("`", f"{s}+1c", le)
+                if not e: break
+                self.md_textbox.tag_add("code", s, f"{e}+1c")
+                search = f"{e}+1c"
+
+    # ─── Public API ───────────────────────────────────────────────────────
     def get_output_formats(self) -> list[str]:
         return ["markdown"]
 
     def show_markdown(self, content: str) -> None:
         self._current_md_path = None
-        self.md_textbox.configure(state="normal")
-        self.md_textbox.delete("1.0", "end")
-        self.md_textbox.insert("1.0", content)
-        self.md_textbox.configure(state="disabled")
-        self._set_markdown_tab()
+        self.title_lbl.configure(text="Anteprima")
+        self._fill_preview(content)
+        self.editor_btn.configure(state="disabled")
+        self.copy_btn.configure(state="normal")
 
     def show_markdown_file(self, md_path: Path) -> None:
         self._current_md_path = md_path
@@ -409,20 +397,23 @@ class OutputFrame(ctk.CTkFrame):
             content = md_path.read_text(encoding="utf-8")
         except OSError:
             content = ""
-        self.md_textbox.configure(state="normal")
-        self.md_textbox.delete("1.0", "end")
-        self.md_textbox.insert("1.0", content)
-        self.md_textbox.configure(state="disabled")
-        self._set_markdown_tab()
+        self.title_lbl.configure(text=md_path.name)
+        self._fill_preview(content)
+        self.editor_btn.configure(state="normal")
+        self.copy_btn.configure(state="normal")
 
     def clear_preview(self, message: str = "") -> None:
         self._current_md_path = None
+        self.title_lbl.configure(text="Nessuna anteprima")
+        self.editor_btn.configure(state="disabled")
+        self.copy_btn.configure(state="disabled")
         self.md_textbox.configure(state="normal")
         self.md_textbox.delete("1.0", "end")
-        if message:
-            self.md_textbox.insert("1.0", message)
+        if not message:
+            message = ("Seleziona un documento per vedere l'anteprima\n"
+                       "del Markdown convertito qui.")
+        self.md_textbox.insert("1.0", message, "placeholder")
         self.md_textbox.configure(state="disabled")
-        self._set_markdown_tab()
 
     def refresh_current_preview(self) -> None:
         if self._current_md_path and self._current_md_path.exists():
@@ -436,27 +427,24 @@ class OutputFrame(ctk.CTkFrame):
             self._editor_window.focus()
             return
         self._editor_window = MarkdownEditorWindow(
-            self,
-            self._current_md_path,
+            self, self._current_md_path,
             on_saved=self._on_editor_saved,
         )
 
     def show_json(self, content: str) -> None:
-        pass  # JSON output not used
+        pass
 
     def set_output_dir(self, path: Path) -> None:
         self._output_dir = path
         self.open_folder_btn.configure(state="normal")
 
     def set_all_mds(self, md_paths: list[Path]) -> None:
-        """Enable copy-all and export buttons with the given MD file list."""
         self._all_md_paths = [p for p in md_paths if p.exists()]
         if self._all_md_paths:
             self.copy_all_btn.configure(state="normal")
             self.export_all_btn.configure(state="normal")
 
     def add_merge_paths(self, paths: list[Path]) -> None:
-        """Add Markdown files to the manual merge area."""
         added = 0
         for path in paths:
             path = Path(path)
@@ -468,52 +456,29 @@ class OutputFrame(ctk.CTkFrame):
                 continue
             if self._add_merge_path(path):
                 added += 1
-        if added:
-            self._refresh_merge_box()
+        if added and self._merge_window and self._merge_window.winfo_exists():
+            self._refresh_merge_dialog()
 
     def clear(self) -> None:
-        self.md_textbox.configure(state="normal")
-        self.md_textbox.delete("1.0", "end")
-        self.md_textbox.configure(state="disabled")
-        self._current_md_path = None
+        self.clear_preview()
         self._all_md_paths = []
         self.copy_all_btn.configure(state="disabled")
         self.export_all_btn.configure(state="disabled")
 
     def set_enabled(self, enabled: bool) -> None:
-        pass  # kept for API compatibility
+        pass
 
-    # ─── Internal ────────────────────────────────────────────────────────────
-
-    def _bind_preview_tab(self) -> None:
-        try:
-            self.tabview.configure(command=self._on_tab_selected)
-        except Exception:
-            pass
-        try:
-            self.tabview._segmented_button._buttons_dict[_PREVIEW_TAB_NAME].configure(
-                command=self.open_markdown_preview
-            )
-        except Exception:
-            pass
-
-    def _on_tab_selected(self) -> None:
-        if not self._suppress_tab_command:
-            self.open_markdown_preview()
-
-    def _set_markdown_tab(self) -> None:
-        self._suppress_tab_command = True
-        try:
-            self.tabview.set(_PREVIEW_TAB_NAME)
-        finally:
-            self._suppress_tab_command = False
+    # ─── Internals ────────────────────────────────────────────────────────
+    def _fill_preview(self, content: str):
+        self.md_textbox.configure(state="normal")
+        self.md_textbox.delete("1.0", "end")
+        self.md_textbox.insert("1.0", content or "")
+        self._apply_md_tags()
+        self.md_textbox.configure(state="disabled")
 
     def _on_editor_saved(self, md_path: Path, content: str) -> None:
         if self._current_md_path == md_path:
-            self.md_textbox.configure(state="normal")
-            self.md_textbox.delete("1.0", "end")
-            self.md_textbox.insert("1.0", content)
-            self.md_textbox.configure(state="disabled")
+            self._fill_preview(content)
 
     def _add_merge_path(self, path: Path) -> bool:
         if path.suffix.lower() not in _MERGE_EXTENSIONS or not path.is_file():
@@ -525,145 +490,112 @@ class OutputFrame(ctk.CTkFrame):
         self._merge_items.append({"type": "path", "path": path})
         return True
 
-    def _paste_merge_from_clipboard(self, event=None):
-        clipboard_paths = self._clipboard_file_paths()
-        if clipboard_paths:
-            self.add_merge_paths(clipboard_paths)
-            return "break"
+    def _open_merge_dialog(self) -> None:
+        if self._merge_window and self._merge_window.winfo_exists():
+            self._merge_window.lift()
+            self._merge_window.focus()
+            return
 
+        dlg = ctk.CTkToplevel(self)
+        self._merge_window = dlg
+        dlg.title("Merge Markdown")
+        dlg.geometry("640x420")
+        dlg.minsize(520, 340)
+        dlg.transient(self)
         try:
-            text = self.winfo_toplevel().clipboard_get()
+            dlg.configure(fg_color=theme.PAPER)
         except Exception:
-            return "break"
+            pass
 
-        text = text.strip()
-        if not text:
-            return "break"
+        head = ctk.CTkFrame(dlg, fg_color="transparent")
+        head.pack(padx=18, pady=(16, 8), fill="x")
+        ctk.CTkLabel(
+            head, text="Merge Markdown",
+            font=theme.font(15, "bold"), text_color=theme.INK,
+        ).pack(side="left")
+        self._merge_count_label = ctk.CTkLabel(
+            head, text="0 elementi",
+            font=theme.font(11, mono=True), text_color=theme.INK_3,
+        )
+        self._merge_count_label.pack(side="right")
 
-        paths = self._clipboard_text_to_paths(text)
-        if paths:
-            self.add_merge_paths(paths)
-            return "break"
+        self._merge_listbox = tk.Text(
+            dlg, height=10, wrap="word",
+            bg=theme.CARD, fg=theme.INK_2,
+            relief="flat", bd=0, highlightthickness=1,
+            highlightbackground=theme.RULE,
+            padx=12, pady=10,
+            font=(theme.mono_family(), 10),
+            state="disabled",
+        )
+        self._merge_listbox.pack(padx=18, pady=(0, 10), fill="both", expand=True)
 
-        label = f"Appunti {sum(1 for item in self._merge_items if item.get('type') == 'text') + 1}"
-        self._merge_items.append({"type": "text", "label": label, "content": text})
-        self._refresh_merge_box()
-        return "break"
+        actions = ctk.CTkFrame(dlg, fg_color="transparent")
+        actions.pack(padx=18, pady=(0, 16), fill="x")
 
-    def _clipboard_text_to_paths(self, text: str) -> list[Path]:
-        paths: list[Path] = []
+        theme.ghost_button(actions, "Aggiungi MD", width=110, height=28,
+                           command=self._pick_merge_files).pack(side="left")
+        theme.ghost_button(actions, "Incolla", width=80, height=28,
+                           command=self._paste_merge_text).pack(side="left", padx=(6, 0))
+        theme.ghost_button(actions, "Svuota", width=80, height=28,
+                           command=self._clear_merge_items).pack(side="left", padx=(6, 0))
+        theme.amber_button(actions, "Copia", width=90, height=28,
+                           command=self._copy_merge_md).pack(side="right", padx=(6, 0))
+        theme.ghost_button(actions, "Salva...", width=90, height=28,
+                           command=self._export_merge_md).pack(side="right")
 
-        def normalize(raw: str) -> Path | None:
-            value = raw.strip().strip('"')
-            if value.startswith("{") and value.endswith("}"):
-                value = value[1:-1].strip()
-            if value.startswith("file://"):
-                import urllib.parse
-                import urllib.request
-                value = urllib.request.url2pathname(urllib.parse.urlparse(value).path)
-            if not value:
-                return None
-            path = Path(value)
-            return path if path.exists() else None
+        self._refresh_merge_dialog()
 
-        for line in text.splitlines():
-            path = normalize(line)
-            if path:
-                paths.append(path)
-
-        if paths:
-            return paths
-
-        try:
-            split_items = self.tk.splitlist(text)
-        except Exception:
-            split_items = []
-        for item in split_items:
-            path = normalize(item)
-            if path:
-                paths.append(path)
-        return paths
-
-    def _clipboard_file_paths(self) -> list[Path]:
-        if sys.platform != "win32":
-            return []
-
-        try:
-            import ctypes
-            from ctypes import wintypes
-        except Exception:
-            return []
-
-        user32 = ctypes.windll.user32
-        shell32 = ctypes.windll.shell32
-        cf_hdrop = 15
-
-        user32.OpenClipboard.argtypes = [wintypes.HWND]
-        user32.OpenClipboard.restype = wintypes.BOOL
-        user32.CloseClipboard.argtypes = []
-        user32.CloseClipboard.restype = wintypes.BOOL
-        user32.GetClipboardData.argtypes = [wintypes.UINT]
-        user32.GetClipboardData.restype = wintypes.HANDLE
-        shell32.DragQueryFileW.argtypes = [
-            wintypes.HANDLE,
-            wintypes.UINT,
-            wintypes.LPWSTR,
-            wintypes.UINT,
-        ]
-        shell32.DragQueryFileW.restype = wintypes.UINT
-
-        if not user32.OpenClipboard(None):
-            return []
-
-        try:
-            handle = user32.GetClipboardData(cf_hdrop)
-            if not handle:
-                return []
-            count = shell32.DragQueryFileW(handle, 0xFFFFFFFF, None, 0)
-            paths = []
-            for index in range(count):
-                length = shell32.DragQueryFileW(handle, index, None, 0)
-                buffer = ctypes.create_unicode_buffer(length + 1)
-                shell32.DragQueryFileW(handle, index, buffer, length + 1)
-                if buffer.value:
-                    paths.append(Path(buffer.value))
-            return paths
-        finally:
-            user32.CloseClipboard()
-
-    def _refresh_merge_box(self) -> None:
-        self.merge_drop_box.configure(state="normal")
-        self.merge_drop_box.delete("1.0", "end")
-
+    def _refresh_merge_dialog(self) -> None:
+        if not self._merge_window or not self._merge_window.winfo_exists():
+            return
+        self._merge_listbox.configure(state="normal")
+        self._merge_listbox.delete("1.0", "end")
         if not self._merge_items:
-            self.merge_drop_box.insert(
-                "1.0",
-                "Trascina qui file .md, oppure incolla percorsi o testo Markdown.",
-            )
+            self._merge_listbox.insert("1.0", "Aggiungi file .md o incolla testo Markdown.")
         else:
             lines = []
             for idx, item in enumerate(self._merge_items, start=1):
                 if item.get("type") == "path":
-                    path = item["path"]
-                    lines.append(f"{idx}. {Path(path).name}")
+                    lines.append(f"{idx}. {Path(item['path']).name}")
                 else:
-                    content = str(item.get("content", ""))
-                    preview = " ".join(content.split())[:72]
+                    preview = " ".join(str(item.get("content", "")).split())[:72]
                     lines.append(f"{idx}. {item.get('label')} - {preview}")
-            self.merge_drop_box.insert("1.0", "\n".join(lines))
-
-        self.merge_drop_box.configure(state="disabled")
-        state = "normal" if self._merge_items else "disabled"
-        self.merge_clear_btn.configure(state=state)
-        self.merge_copy_btn.configure(state=state)
-        self.merge_save_btn.configure(state=state)
+            self._merge_listbox.insert("1.0", "\n".join(lines))
+        self._merge_listbox.configure(state="disabled")
         n = len(self._merge_items)
-        self.merge_count_label.configure(text=f"{n} elemento" if n == 1 else f"{n} elementi")
+        self._merge_count_label.configure(text=f"{n} elemento" if n == 1 else f"{n} elementi")
+
+    def _pick_merge_files(self) -> None:
+        paths = filedialog.askopenfilenames(
+            title="Seleziona Markdown da unire",
+            filetypes=[("Markdown", "*.md *.markdown"), ("Tutti i file", "*.*")],
+        )
+        self.add_merge_paths([Path(p) for p in paths])
+
+    def _paste_merge_text(self) -> None:
+        try:
+            text = self.winfo_toplevel().clipboard_get().strip()
+        except Exception:
+            return
+        if not text:
+            return
+        paths = []
+        for line in text.splitlines():
+            candidate = Path(line.strip().strip('"'))
+            if candidate.exists():
+                paths.append(candidate)
+        if paths:
+            self.add_merge_paths(paths)
+            return
+        label = f"Appunti {sum(1 for item in self._merge_items if item.get('type') == 'text') + 1}"
+        self._merge_items.append({"type": "text", "label": label, "content": text})
+        self._refresh_merge_dialog()
 
     def _clear_merge_items(self) -> None:
         self._merge_items.clear()
         self._merge_path_keys.clear()
-        self._refresh_merge_box()
+        self._refresh_merge_dialog()
 
     def _build_manual_merge_md(self) -> str:
         parts = []
@@ -689,8 +621,6 @@ class OutputFrame(ctk.CTkFrame):
         root = self.winfo_toplevel()
         root.clipboard_clear()
         root.clipboard_append(combined)
-        self.merge_copy_btn.configure(text="Copiato")
-        self.after(1800, lambda: self.merge_copy_btn.configure(text="Copia merge"))
 
     def _export_merge_md(self) -> None:
         combined = self._build_manual_merge_md()
@@ -702,14 +632,24 @@ class OutputFrame(ctk.CTkFrame):
             filetypes=[("Markdown", "*.md"), ("Testo", "*.txt"), ("Tutti i file", "*.*")],
             initialfile="merge_markdown.md",
         )
-        if not save_path:
+        if save_path:
+            try:
+                Path(save_path).write_text(combined, encoding="utf-8")
+            except OSError:
+                pass
+
+    def _copy_current(self) -> None:
+        if not self._current_md_path or not self._current_md_path.exists():
             return
         try:
-            Path(save_path).write_text(combined, encoding="utf-8")
-            self.merge_save_btn.configure(text="Salvato")
-            self.after(1800, lambda: self.merge_save_btn.configure(text="Salva merge..."))
+            content = self._current_md_path.read_text(encoding="utf-8")
         except OSError:
-            pass
+            return
+        root = self.winfo_toplevel()
+        root.clipboard_clear()
+        root.clipboard_append(content)
+        self.copy_btn.configure(text="Copiato")
+        self.after(1500, lambda: self.copy_btn.configure(text="Copia"))
 
     def _build_combined_md(self) -> str:
         parts = []
@@ -729,9 +669,8 @@ class OutputFrame(ctk.CTkFrame):
         root = self.winfo_toplevel()
         root.clipboard_clear()
         root.clipboard_append(combined)
-        # Brief visual feedback
-        self.copy_all_btn.configure(text="✓  Copiato!")
-        self.after(1800, lambda: self.copy_all_btn.configure(text="⎘  Copia tutti"))
+        self.copy_all_btn.configure(text="✓ Copiato")
+        self.after(1800, lambda: self.copy_all_btn.configure(text="Copia tutti"))
 
     def _export_all_md(self) -> None:
         combined = self._build_combined_md()
@@ -747,9 +686,8 @@ class OutputFrame(ctk.CTkFrame):
             return
         try:
             Path(save_path).write_text(combined, encoding="utf-8")
-            # Brief visual feedback
-            self.export_all_btn.configure(text="✓  Salvato!")
-            self.after(1800, lambda: self.export_all_btn.configure(text="↓  Salva unito…"))
+            self.export_all_btn.configure(text="✓ Salvato")
+            self.after(1800, lambda: self.export_all_btn.configure(text="Salva unito…"))
         except OSError:
             pass
 

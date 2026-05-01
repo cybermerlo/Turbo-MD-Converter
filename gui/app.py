@@ -1,21 +1,25 @@
-import json
+"""Turbo MD Converter — main window (paper + amber redesign)."""
+
+from __future__ import annotations
+import os
 import queue
+import subprocess
+import sys
 import tkinter as tk
 from pathlib import Path
 
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
 
-from config.defaults import AVAILABLE_OCR_MODELS, SCHEMA_PRESET_NAMES
-
-_RENAME_MODE_LABELS = {"md": "Solo MD", "pdf": "Solo PDF", "both": "Entrambi"}
-_RENAME_LABEL_TO_MODE = {v: k for k, v in _RENAME_MODE_LABELS.items()}
-from config.settings import AppConfig, load_config, save_config
+from config.settings import AppConfig, save_config
+from gui import theme
 from gui.frames.input_frame import InputFrame
 from gui.frames.log_frame import LogFrame
 from gui.frames.output_frame import OutputFrame
 from gui.frames.progress_frame import ProgressFrame
 from gui.frames.settings_frame import SettingsWindow
+from gui.options_panel import OptionsPanel
+from gui.toast import ToastStack
 from pipeline.events import (
     BatchCompleteEvent,
     ErrorEvent,
@@ -34,30 +38,21 @@ from pipeline.events import (
 from pipeline.worker import PipelineWorker
 from version import VERSION
 
-_FONT_BOLD = ("", 13, "bold")
-
-
-def _section_label(parent, text: str) -> ctk.CTkLabel:
-    """Small uppercase section header."""
-    return ctk.CTkLabel(
-        parent, text=text.upper(),
-        font=ctk.CTkFont(size=10, weight="bold"),
-        text_color="gray60",
-    )
-
 
 class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
-    """Main application window."""
+    """Main application window — 3-column paper layout."""
 
     def __init__(self, config: AppConfig, initial_files: list[Path] | None = None):
         super().__init__()
         self.TkdndVersion = TkinterDnD._require(self)
 
+        # Theme must be set BEFORE any widgets are created
+        theme.install_theme()
+
         self.title("Turbo MD Converter")
-        self.geometry("1140x780")
-        self.minsize(960, 620)
-        ctk.set_appearance_mode("system")
-        ctk.set_default_color_theme("blue")
+        self.geometry("1320x820")
+        self.minsize(1120, 640)
+        self.configure(fg_color=theme.PAPER)
 
         self.config = config
         self.gui_queue: queue.Queue[PipelineEvent] = queue.Queue()
@@ -65,309 +60,162 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._batch_total: int = 0
         self._batch_done: int = 0
-        self._base_cost: float = 0.0       # cost of fully-completed files
-        self._current_ocr_cost: float = 0.0  # running OCR cost for file in progress
-        self._converted_mds: dict[Path, Path] = {}  # input_path → .md output path
+        self._base_cost: float = 0.0
+        self._current_ocr_cost: float = 0.0
+        self._converted_mds: dict[Path, Path] = {}
+        self._cost_per_input: dict[Path, float] = {}
+        self._error_keys: dict[Path, str] = {}
 
         self._build_layout()
         self._setup_drag_drop()
         self.bind("<Delete>", self._on_delete_key)
         self._start_queue_polling()
 
+        # initial state
+        self._sync_options_to_config()
+        self._refresh_cost_chart()
+
         if initial_files:
             self.after(100, lambda: self.input_frame.add_paths(initial_files))
-
         self.after(500, self._check_sendto_shortcut)
 
     # ─── Layout ──────────────────────────────────────────────────────────────
-
     def _build_layout(self) -> None:
-        """Construct the main UI layout."""
-        # ── Top bar ──────────────────────────────────────────────────────────
-        top_bar = ctk.CTkFrame(self, height=52, fg_color="transparent")
-        top_bar.pack(padx=14, pady=(12, 0), fill="x")
-        top_bar.pack_propagate(False)
+        self.grid_columnconfigure(0, weight=0)   # sidebar
+        self.grid_columnconfigure(1, weight=1)   # canvas
+        self.grid_columnconfigure(2, weight=0)   # options
+        self.grid_rowconfigure(1, weight=1)      # row 0 = topbar, row 1 = body
 
-        # Logo icon
+        # ── Top bar ──────────────────────────────────────────────────────
+        topbar = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
+                              height=58)
+        topbar.grid(row=0, column=0, columnspan=3, sticky="ew")
+        topbar.grid_propagate(False)
+        theme.hairline(topbar).pack(side="bottom", fill="x")
+
+        topbar_inner = ctk.CTkFrame(topbar, fg_color="transparent")
+        topbar_inner.pack(fill="both", expand=True, padx=22, pady=10)
+
+        # Brand mark
         try:
             from PIL import Image
             logo_path = Path(__file__).parent.parent / "logo.png"
             if logo_path.exists():
                 img = Image.open(logo_path)
-                self.logo_img = ctk.CTkImage(light_image=img, dark_image=img, size=(32, 32))
-                ctk.CTkLabel(top_bar, image=self.logo_img, text="").pack(side="left", padx=(0, 10))
+                self.logo_img = ctk.CTkImage(light_image=img, dark_image=img,
+                                             size=(28, 28))
+                ctk.CTkLabel(topbar_inner, image=self.logo_img, text="").pack(
+                    side="left", padx=(0, 10))
         except Exception:
             pass
 
         ctk.CTkLabel(
-            top_bar,
-            text="Turbo MD Converter",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            topbar_inner, text="Turbo MD Converter",
+            font=theme.font(15, "bold"), text_color=theme.INK,
         ).pack(side="left")
-
         ctk.CTkLabel(
-            top_bar,
-            text=f"v{VERSION}",
-            font=ctk.CTkFont(size=11),
-            text_color="gray60",
-        ).pack(side="left", padx=(10, 0), pady=8)
+            topbar_inner, text=f"v{VERSION}",
+            font=theme.font(10, mono=True), text_color=theme.INK_4,
+        ).pack(side="left", padx=(10, 0), pady=(4, 0))
 
-        ctk.CTkButton(
-            top_bar, text="Impostazioni", width=110,
-            command=self._open_settings,
-        ).pack(side="right", pady=8)
+        # Right side: cost summary
+        self.topbar_cost_lbl = ctk.CTkLabel(
+            topbar_inner, text="$0.0000",
+            font=theme.font(13, "bold", mono=True), text_color=theme.INK,
+        )
+        self.topbar_cost_lbl.pack(side="right")
+        ctk.CTkLabel(
+            topbar_inner, text="COSTO SESSIONE",
+            font=theme.font(9, "bold"), text_color=theme.INK_3,
+        ).pack(side="right", padx=(0, 8), pady=(2, 0))
 
-        ctk.CTkButton(
-            top_bar, text="Aggiornamenti", width=110,
-            fg_color="transparent", border_width=1,
-            command=self._open_update_dialog,
-        ).pack(side="right", pady=8, padx=(0, 8))
-
-        # ── Two-column content ────────────────────────────────────────────────
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(padx=14, pady=(8, 12), fill="both", expand=True)
-        content.grid_columnconfigure(0, weight=3, minsize=300)
-        content.grid_columnconfigure(1, weight=5, minsize=520)
-        content.grid_rowconfigure(0, weight=1)
-
-        # LEFT column
-        left = ctk.CTkFrame(content, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        left.grid_rowconfigure(0, weight=1)   # file list expands
-        left.grid_rowconfigure(1, weight=0)   # options card
-        left.grid_rowconfigure(2, weight=0)   # action buttons
+        # ── Sidebar ──────────────────────────────────────────────────────
+        sidebar = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
+                               width=320)
+        sidebar.grid(row=1, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        # vertical hairline on the right
+        rule = ctk.CTkFrame(sidebar, width=1, fg_color=theme.RULE,
+                            corner_radius=0)
+        rule.pack(side="right", fill="y")
 
         self.input_frame = InputFrame(
-            left,
+            sidebar,
             on_files_changed=self._on_files_changed,
             on_selection_changed=self._on_input_selection_changed,
             on_open_requested=self._open_input_file,
         )
-        self.input_frame.grid(row=0, column=0, sticky="nsew", pady=(0, 6))
-        left.grid_columnconfigure(0, weight=1)
+        self.input_frame.pack(side="left", fill="both", expand=True)
 
-        self._build_options_card(left)
-        self._build_action_buttons(left)
+        # ── Canvas (center column) ───────────────────────────────────────
+        canvas = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0)
+        canvas.grid(row=1, column=1, sticky="nsew")
+        canvas.grid_columnconfigure(0, weight=1)
+        canvas.grid_rowconfigure(1, weight=1)   # output frame stretches
 
-        # RIGHT column
-        right = ctk.CTkFrame(content, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        right.grid_rowconfigure(0, weight=0)
-        right.grid_rowconfigure(1, weight=1)
-        right.grid_rowconfigure(2, weight=0)
-        right.grid_columnconfigure(0, weight=1)
+        self.progress_frame = ProgressFrame(canvas)
+        self.progress_frame.grid(row=0, column=0, sticky="ew")
 
-        self.progress_frame = ProgressFrame(right)
-        self.progress_frame.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.output_frame = OutputFrame(canvas)
+        self.output_frame.grid(row=1, column=0, sticky="nsew")
 
-        self.output_frame = OutputFrame(
-            right,
-            actions_parent=self.progress_frame.actions_frame,
-        )
-        self.output_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 6))
-
-        self.log_frame = LogFrame(right)
+        self.log_frame = LogFrame(canvas)
         self.log_frame.grid(row=2, column=0, sticky="ew")
 
-        # Apply initial greyed states
-        self._on_phases_changed()
-        self._on_rename_changed()
+        # ── Options panel (right column) ─────────────────────────────────
+        opts_wrap = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
+                                 width=340)
+        opts_wrap.grid(row=1, column=2, sticky="nsew")
+        opts_wrap.grid_propagate(False)
+        rule2 = ctk.CTkFrame(opts_wrap, width=1, fg_color=theme.RULE,
+                             corner_radius=0)
+        rule2.pack(side="left", fill="y")
 
-    def _build_options_card(self, parent) -> None:
-        """Build the compact options card below the file list."""
-        card = ctk.CTkFrame(parent)
-        card.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-
-        _section_label(card, "Operazioni").pack(padx=12, pady=(10, 4), anchor="w")
-
-        # ── Modello AI (shared by all features) ──────────────────────────────
-        model_row = ctk.CTkFrame(card, fg_color="transparent")
-        model_row.pack(padx=12, pady=(0, 6), fill="x")
-
-        ctk.CTkLabel(model_row, text="Modello AI:").pack(side="left", padx=(0, 8))
-        self.model_var = ctk.StringVar(
-            value=self.config.ocr_model_id
-            if self.config.ocr_model_id in AVAILABLE_OCR_MODELS
-            else AVAILABLE_OCR_MODELS[0]
+        self.options_panel = OptionsPanel(
+            opts_wrap, self.config,
+            on_change=self._on_options_change,
+            on_start=self._start_processing,
+            on_cancel=self._cancel_processing,
+            on_open_settings=self._open_settings,
+            on_open_updates=self._open_update_dialog,
+            on_open_rename_context=self._open_rename_context_dialog,
         )
-        self.model_menu = ctk.CTkOptionMenu(
-            model_row, values=AVAILABLE_OCR_MODELS,
-            variable=self.model_var, width=220,
-        )
-        self.model_menu.pack(side="right")
+        self.options_panel.pack(side="left", fill="both", expand=True)
 
-        # ── Divider ───────────────────────────────────────────────────────────
-        ctk.CTkFrame(card, height=1, fg_color="gray30").pack(padx=12, pady=(0, 6), fill="x")
+        # ── Toast stack (overlay anchored bottom-right) ──────────────────
+        self.toast_stack = ToastStack(self)
+        # Position above the log drawer
+        self._reposition_toast_stack()
+        self.bind("<Configure>", lambda _e: self._reposition_toast_stack())
 
-        # ── OCR ───────────────────────────────────────────────────────────────
-        ocr_row = ctk.CTkFrame(card, fg_color="transparent")
-        ocr_row.pack(padx=12, pady=2, fill="x")
-
-        self.run_ocr_var = ctk.BooleanVar(value=self.config.run_ocr)
-        self.run_ocr_cb = ctk.CTkCheckBox(
-            ocr_row, text="OCR — estrai testo",
-            variable=self.run_ocr_var,
-            command=self._on_phases_changed,
-        )
-        self.run_ocr_cb.pack(side="left")
-
-        # ── Estrazione strutturata ────────────────────────────────────────────
-        ext_row = ctk.CTkFrame(card, fg_color="transparent")
-        ext_row.pack(padx=12, pady=2, fill="x")
-
-        self.run_extraction_var = ctk.BooleanVar(value=self.config.run_extraction)
-        self.run_extraction_cb = ctk.CTkCheckBox(
-            ext_row, text="Estrazione strutturata",
-            variable=self.run_extraction_var,
-            command=self._on_phases_changed,
-        )
-        self.run_extraction_cb.pack(side="left")
-
-        self.schema_var = ctk.StringVar(value=self.config.active_schema)
-        self.schema_menu = ctk.CTkOptionMenu(
-            ext_row, values=SCHEMA_PRESET_NAMES,
-            variable=self.schema_var, width=140,
-        )
-        self.schema_menu.pack(side="right")
-
-        # ── Rinomina ──────────────────────────────────────────────────────────
-        rename_row = ctk.CTkFrame(card, fg_color="transparent")
-        rename_row.pack(padx=12, pady=2, fill="x")
-
-        self.rename_files_var = ctk.BooleanVar(value=self.config.rename_files)
-        self.rename_cb = ctk.CTkCheckBox(
-            rename_row, text="Rinomina file automaticamente",
-            variable=self.rename_files_var,
-            command=self._on_rename_changed,
-        )
-        self.rename_cb.pack(side="left")
-
-        self.rename_mode_var = ctk.StringVar(
-            value=_RENAME_MODE_LABELS.get(self.config.rename_mode, "Entrambi")
-        )
-        self.rename_mode_menu = ctk.CTkOptionMenu(
-            rename_row, values=list(_RENAME_MODE_LABELS.values()),
-            variable=self.rename_mode_var, width=100,
-        )
-        self.rename_mode_menu.pack(side="right")
-
-        # ── Rename strategy + quick context editor ───────────────────────────
-        self.rename_strategy_row = ctk.CTkFrame(card, fg_color="transparent")
-
-        self.rename_batch_context_var = ctk.BooleanVar(
-            value=bool(getattr(self.config, "rename_use_batch_context", False))
-        )
-        self.rename_batch_context_cb = ctk.CTkCheckBox(
-            self.rename_strategy_row,
-            text="Batch-context",
-            variable=self.rename_batch_context_var,
-            command=self._on_rename_strategy_changed,
-        )
-        self.rename_batch_context_cb.pack(side="left", padx=(0, 10))
-
-        self.rename_strategy_label = ctk.CTkLabel(
-            self.rename_strategy_row,
-            text=self._get_rename_strategy_label(),
-            font=ctk.CTkFont(size=11),
-            text_color=("gray25", "gray80"),
-            anchor="w",
-        )
-        self.rename_strategy_label.pack(side="left", fill="x", expand=True, padx=(0, 8))
-
-        self.rename_context_btn = ctk.CTkButton(
-            self.rename_strategy_row,
-            text="Contesto rinomina…",
-            width=140,
-            fg_color="transparent",
-            border_width=1,
-            command=self._open_rename_context_dialog,
-        )
-        self.rename_context_btn.pack(side="right")
-
-        # ── Divider ───────────────────────────────────────────────────────────
-        self.rename_output_divider = ctk.CTkFrame(card, height=1, fg_color="gray30")
-        self.rename_output_divider.pack(padx=12, pady=(8, 4), fill="x")
-
-        # ── Output mode ───────────────────────────────────────────────────────
-        _section_label(card, "Destinazione output").pack(padx=12, pady=(4, 2), anchor="w")
-
-        self.output_mode_var = ctk.StringVar(value=self.config.output_mode)
-
-        modes = [
-            ("accanto",       "Accanto al file originale"),
-            ("sottocartella", f'Sottocartella "{self.config.output_subfolder_name}"'),
-            ("cartella",      "Cartella specifica…"),
-        ]
-        for value, label in modes:
-            ctk.CTkRadioButton(
-                card, text=label,
-                variable=self.output_mode_var, value=value,
-                command=self._on_output_mode_changed,
-            ).pack(padx=20, pady=1, anchor="w")
-
-        # Row shown only in "cartella" mode
-        self._cartella_row = ctk.CTkFrame(card, fg_color="transparent")
-        self._cartella_row.pack(padx=12, pady=(2, 0), fill="x")
-
-        self._cartella_label = ctk.CTkLabel(
-            self._cartella_row,
-            text=self._short_dir_label(self.config.output_directory),
-            font=ctk.CTkFont(size=11),
-            text_color="gray50",
-        )
-        self._cartella_label.pack(side="left", fill="x", expand=True)
-
-        ctk.CTkButton(
-            self._cartella_row, text="Scegli…", width=70,
-            command=self._pick_output_folder,
-        ).pack(side="right")
-
-        ctk.CTkFrame(card, height=6, fg_color="transparent").pack()
-
-        self._on_output_mode_changed()
-
-    def _build_action_buttons(self, parent) -> None:
-        """Build start/cancel buttons."""
-        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        btn_frame.grid(row=2, column=0, sticky="ew")
-
-        self.start_btn = ctk.CTkButton(
-            btn_frame,
-            text="Elabora documenti",
-            command=self._start_processing,
-            font=ctk.CTkFont(size=14, weight="bold"),
-            height=42,
-            state="disabled",
-        )
-        self.start_btn.pack(fill="x", pady=(0, 4))
-
-        self.cancel_btn = ctk.CTkButton(
-            btn_frame,
-            text="Interrompi",
-            command=self._cancel_processing,
-            fg_color="firebrick",
-            hover_color="darkred",
-            height=34,
-            state="disabled",
-        )
-        self.cancel_btn.pack(fill="x")
+    def _reposition_toast_stack(self):
+        if not hasattr(self, "toast_stack"):
+            return
+        # Anchor to bottom-right of the canvas (col 1) area, above the log drawer
+        try:
+            self.update_idletasks()
+            w = 360
+            self.toast_stack.place(
+                in_=self,
+                relx=1.0, rely=1.0,
+                anchor="se",
+                x=-360, y=-72,
+                width=w,
+            )
+        except Exception:
+            pass
 
     # ─── Drag & drop ─────────────────────────────────────────────────────────
-
     def _setup_drag_drop(self) -> None:
         self._register_drop_targets(
             self._on_drop_files,
             self,
             self.input_frame,
             self.input_frame.file_list,
+            self.input_frame.dropzone,
+            *self.input_frame.dropzone.winfo_children(),
             self.output_frame,
-            self.output_frame.tabview,
             self.output_frame.md_textbox,
-        )
-        self._register_drop_targets(
-            self._on_drop_merge_files,
-            self.output_frame.merge_frame,
-            self.output_frame.merge_drop_box,
         )
 
     def _register_drop_targets(self, callback, *widgets) -> None:
@@ -383,11 +231,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.input_frame.add_paths(path_objs)
         return event.action
 
-    def _on_drop_merge_files(self, event) -> None:
-        path_objs = self._paths_from_drop_event(event)
-        self.output_frame.add_merge_paths(path_objs)
-        return event.action
-
     def _paths_from_drop_event(self, event) -> list[Path]:
         if not event.data:
             return []
@@ -395,18 +238,16 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             paths = self.tk.splitlist(event.data)
         except Exception:
             paths = [event.data.strip()]
-
-        path_objs = []
+        out = []
         for p in paths:
             p = p.strip()
             if not p:
                 continue
             if p.startswith("file://"):
-                import urllib.parse
-                import urllib.request
+                import urllib.parse, urllib.request
                 p = urllib.request.url2pathname(urllib.parse.urlparse(p).path)
-            path_objs.append(Path(p))
-        return path_objs
+            out.append(Path(p))
+        return out
 
     def _on_delete_key(self, event=None):
         if self.input_frame.get_selected_path() is not None:
@@ -414,7 +255,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         return None
 
     # ─── Event queue ─────────────────────────────────────────────────────────
-
     def _start_queue_polling(self) -> None:
         try:
             while True:
@@ -425,22 +265,16 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.after(100, self._start_queue_polling)
 
     def _handle_event(self, event: PipelineEvent) -> None:
-        """Route pipeline events to the appropriate UI components."""
         if isinstance(event, OCRProgressEvent):
             if event.page_num == 0:
                 self._current_ocr_cost = event.page_cost
             else:
                 self._current_ocr_cost += event.page_cost
-            self.progress_frame.update_cost(self._base_cost + self._current_ocr_cost)
+            self._update_total_cost()
 
-        elif isinstance(event, ExtractionStartEvent):
-            pass  # no progress-frame update needed
-
-        elif isinstance(event, ExtractionProgressEvent):
-            pass  # no progress-frame update needed
-
-        elif isinstance(event, ExtractionCompleteEvent):
-            pass  # no progress-frame update needed
+        elif isinstance(event, (ExtractionStartEvent, ExtractionProgressEvent,
+                                ExtractionCompleteEvent)):
+            pass  # no UI update needed
 
         elif isinstance(event, PageNativeTextEvent):
             self.log_frame.append(
@@ -450,14 +284,13 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             )
 
         elif isinstance(event, PageSkippedEvent):
-            msg = (
-                f"Pagina {event.page_num + 1}/{event.total_pages} senza testo\n"
-                f"Motivo: {event.reason}"
-            )
+            msg = (f"Pagina {event.page_num + 1}/{event.total_pages} senza testo. "
+                   f"Motivo: {event.reason}")
             self.log_frame.append(msg, "WARNING")
-            self.after(0, lambda m=msg: tk.messagebox.showwarning(
-                title="Pagina senza testo", message=m,
-            ))
+            self._show_toast(
+                key=f"skip-{event.page_num}",
+                title="Pagina senza testo", message=msg, level="warning",
+            )
 
         elif isinstance(event, OutputWrittenEvent):
             if event.file_paths:
@@ -478,16 +311,25 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self._base_cost += file_cost
             self._current_ocr_cost = 0.0
             self._batch_done += 1
-            self.progress_frame.update_files(
-                self._batch_done, self._batch_total, self._base_cost,
-            )
-            if event.pdf_path and event.success:
-                md_files = [f for f in event.output_files if f.suffix == ".md"]
-                if md_files:
-                    self._converted_mds[event.pdf_path] = md_files[0]
-                    self.input_frame.set_md_for_file(event.pdf_path, md_files[0])
-                    if self.input_frame.get_selected_path() == event.pdf_path:
-                        self.output_frame.show_markdown_file(md_files[0])
+
+            self.progress_frame.update_files(self._batch_done, self._batch_total,
+                                             self._base_cost)
+            self._update_total_cost()
+
+            if event.pdf_path:
+                self._cost_per_input[event.pdf_path] = file_cost
+                self.input_frame.set_cost_for_file(event.pdf_path, file_cost)
+                if event.success:
+                    self.input_frame.set_status_for_file(event.pdf_path, "ok")
+                    md_files = [f for f in event.output_files if f.suffix == ".md"]
+                    if md_files:
+                        self._converted_mds[event.pdf_path] = md_files[0]
+                        self.input_frame.set_md_for_file(event.pdf_path, md_files[0])
+                        if self.input_frame.get_selected_path() == event.pdf_path:
+                            self.output_frame.show_markdown_file(md_files[0])
+                else:
+                    self.input_frame.set_status_for_file(event.pdf_path, "err")
+            self._refresh_cost_chart()
 
         elif isinstance(event, BatchCompleteEvent):
             self._on_batch_complete(event)
@@ -497,8 +339,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 f"Rinominato ({event.file_type.upper()}): "
                 f"{event.original_path.name} → {event.new_path.name}"
             )
-            # If MD files are renamed after PipelineCompleteEvent, keep copy
-            # buttons and "Copia tutti" list aligned with real final paths.
             if event.file_type == "md" and event.original_path and event.new_path:
                 for input_path, md_path in list(self._converted_mds.items()):
                     if md_path == event.original_path:
@@ -511,28 +351,82 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 md_path = self._converted_mds.pop(event.original_path, None)
                 if md_path:
                     self._converted_mds[event.new_path] = md_path
+                cost = self._cost_per_input.pop(event.original_path, 0.0)
+                self._cost_per_input[event.new_path] = cost
                 was_selected = self.input_frame.get_selected_path() == event.original_path
                 self.input_frame.replace_path(event.original_path, event.new_path)
                 if md_path:
                     self.input_frame.set_md_for_file(event.new_path, md_path)
                     if was_selected:
                         self.output_frame.show_markdown_file(md_path)
+                if cost:
+                    self.input_frame.set_cost_for_file(event.new_path, cost)
+                self._refresh_cost_chart()
 
         elif isinstance(event, ErrorEvent):
             self.log_frame.append(event.error_message, "ERROR")
+            target = getattr(event, "pdf_path", None)
+            if target:
+                self.input_frame.set_status_for_file(target, "err")
+            self._show_toast(
+                key=f"err-{target}" if target else "err-general",
+                title="Errore di elaborazione",
+                message=event.error_message,
+                level="error",
+            )
 
         elif isinstance(event, LogEvent):
             self.log_frame.append(event.message, event.level)
 
-    # ─── Processing ──────────────────────────────────────────────────────────
+    # ─── Cost helpers ────────────────────────────────────────────────────
+    def _update_total_cost(self):
+        total = self._base_cost + self._current_ocr_cost
+        self.topbar_cost_lbl.configure(text=f"${total:.4f}")
+        self.progress_frame.update_cost(total)
+
+    def _refresh_cost_chart(self):
+        rows = []
+        for p, status, _cost in self.input_frame.get_rows():
+            actual = self._cost_per_input.get(p, 0.0)
+            rows.append((p.name, status, actual))
+        self.options_panel.update_cost_rows(rows)
+
+    # ─── Options + processing ───────────────────────────────────────────
+    def _on_options_change(self):
+        if not hasattr(self, "options_panel"):
+            return
+        self._sync_options_to_config()
+
+    def _sync_options_to_config(self):
+        v = self.options_panel.get_values()
+        self.config.run_ocr = v["run_ocr"]
+        self.config.run_extraction = v["run_extraction"]
+        self.config.ocr_model_id = v["model"]
+        self.config.extraction_model_id = v["model"]
+        self.config.active_schema = v["schema"]
+        self.config.rename_files = v["rename_files"]
+        self.config.rename_mode = v["rename_mode"]
+        self.config.rename_use_batch_context = bool(v["rename_use_batch_context"])
+        self.config.output_mode = v["output_mode"]
+        self.config.output_formats = ["markdown"]
 
     def _on_files_changed(self, paths: list[Path]) -> None:
         has_files = len(paths) > 0
-        self.start_btn.configure(state="normal" if has_files else "disabled")
-        current_paths = set(paths)
+        self.options_panel.set_can_start(has_files)
+
+        # Drop stale tracking data for files no longer in the list.
+        current = set(paths)
         for input_path in list(self._converted_mds):
-            if input_path not in current_paths:
+            if input_path not in current:
                 self._converted_mds.pop(input_path, None)
+        for p in list(self._cost_per_input):
+            if p not in current:
+                self._cost_per_input.pop(p, None)
+        for p in list(self._error_keys):
+            if p not in current:
+                self.toast_stack._on_toast_closed(self._error_keys[p])
+                self._error_keys.pop(p, None)
+        self._refresh_cost_chart()
 
     def _on_input_selection_changed(self, path: Path | None) -> None:
         if path is None:
@@ -543,7 +437,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.output_frame.show_markdown_file(md_path)
         else:
             self.output_frame.clear_preview(
-                "Il Markdown del file selezionato non e' ancora disponibile."
+                "Il Markdown del file selezionato non è ancora disponibile."
             )
 
     def _open_input_file(self, path: Path, is_clipboard: bool) -> None:
@@ -552,9 +446,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         if not path.exists():
             return
-        import os
-        import subprocess
-        import sys
         if sys.platform == "win32":
             os.startfile(path)  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
@@ -564,27 +455,35 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _open_clipboard_editor(self, path: Path) -> None:
         dlg = ctk.CTkToplevel(self)
-        dlg.title(f"Appunti - {path.name}")
-        dlg.geometry("640x420")
+        dlg.title(f"Appunti — {path.name}")
+        dlg.geometry("680x440")
         dlg.minsize(460, 300)
         dlg.transient(self)
+        try:
+            dlg.configure(fg_color=theme.PAPER)
+        except Exception:
+            pass
 
         ctk.CTkLabel(
-            dlg,
-            text="Contenuto incollato",
-            font=ctk.CTkFont(size=15, weight="bold"),
-        ).pack(padx=14, pady=(14, 6), anchor="w")
+            dlg, text="Contenuto incollato",
+            font=theme.font(15, "bold"), text_color=theme.INK,
+        ).pack(padx=18, pady=(16, 6), anchor="w")
 
-        textbox = ctk.CTkTextbox(dlg, font=ctk.CTkFont(family="Consolas", size=11), wrap="word")
-        textbox.pack(padx=14, pady=(0, 10), fill="both", expand=True)
+        textbox = ctk.CTkTextbox(
+            dlg, font=theme.font(11, mono=True), wrap="word",
+            fg_color=theme.CARD, text_color=theme.INK,
+            border_width=1, border_color=theme.RULE,
+        )
+        textbox.pack(padx=18, pady=(0, 10), fill="both", expand=True)
         try:
             textbox.insert("1.0", path.read_text(encoding="utf-8"))
         except OSError:
             pass
 
         btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
-        btn_row.pack(padx=14, pady=(0, 14), fill="x")
-        status = ctk.CTkLabel(btn_row, text="", font=ctk.CTkFont(size=11), text_color="gray55")
+        btn_row.pack(padx=18, pady=(0, 16), fill="x")
+        status = ctk.CTkLabel(btn_row, text="",
+                              font=theme.font(11), text_color=theme.INK_3)
         status.pack(side="left")
 
         def save():
@@ -594,74 +493,55 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             except OSError as exc:
                 status.configure(text=f"Errore: {exc}")
 
-        ctk.CTkButton(
-            btn_row,
-            text="Salva",
-            width=100,
-            command=save,
-        ).pack(side="right", padx=(8, 0))
-        ctk.CTkButton(
-            btn_row,
-            text="Chiudi",
-            width=100,
-            fg_color="transparent",
-            border_width=1,
-            command=dlg.destroy,
-        ).pack(side="right")
+        theme.amber_button(btn_row, "Salva", width=100, command=save).pack(
+            side="right", padx=(8, 0))
+        theme.ghost_button(btn_row, "Chiudi", width=100,
+                           command=dlg.destroy).pack(side="right")
 
     def _start_processing(self) -> None:
         pdf_paths = self.input_frame.get_file_paths()
         if not pdf_paths:
             return
 
-        run_ocr = self.run_ocr_var.get()
-        run_extraction = self.run_extraction_var.get()
+        self._sync_options_to_config()
 
-        if not run_ocr and not run_extraction:
-            self.log_frame.append(
-                "Seleziona almeno un'operazione (OCR o Estrazione strutturata).", "ERROR"
-            )
+        if not self.config.run_ocr and not self.config.run_extraction:
+            msg = "Seleziona almeno un'operazione (OCR o Estrazione strutturata)."
+            self.log_frame.append(msg, "ERROR")
+            self._show_toast("missing-op", "Operazione mancante", msg, "error")
             return
 
         from pipeline.processor import IMAGE_EXTENSIONS
         needs_ocr = any(
             p.suffix.lower() in (".pdf",) + IMAGE_EXTENSIONS for p in pdf_paths
         )
-        needs_api_key = (needs_ocr and run_ocr) or run_extraction
+        needs_api_key = (needs_ocr and self.config.run_ocr) or self.config.run_extraction
         if not self.config.gemini_api_key and needs_api_key:
-            self.log_frame.append(
-                "Chiave API Gemini non configurata. Aprire le Impostazioni.", "ERROR"
-            )
+            msg = "Chiave API Gemini non configurata. Apri le Impostazioni."
+            self.log_frame.append(msg, "ERROR")
+            self._show_toast("no-api-key", "Chiave API mancante", msg, "error")
             return
 
-        # Sync config from UI
-        self.config.run_ocr = run_ocr
-        self.config.run_extraction = run_extraction
-        self.config.ocr_model_id = self.model_var.get()
-        self.config.extraction_model_id = self.model_var.get()
-        self.config.active_schema = self.schema_var.get()
-        self.config.rename_files = self.rename_files_var.get()
-        self.config.rename_mode = _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both")
-        self.config.rename_use_batch_context = bool(self.rename_batch_context_var.get())
-        self.config.output_mode = self.output_mode_var.get()
-        self.config.output_formats = ["markdown"]
-
-        # Reset UI and batch tracking
+        # Reset batch state
         self._batch_total = len(pdf_paths)
         self._batch_done = 0
         self._base_cost = 0.0
         self._current_ocr_cost = 0.0
         self._converted_mds = {}
+        self._cost_per_input = {}
+        self.toast_stack.clear()
+        self._error_keys = {}
 
         self.progress_frame.reset()
         self.progress_frame.set_batch(self._batch_total)
         self.output_frame.clear()
         self.log_frame.clear()
         self.input_frame.reset_copy_buttons()
+        self._refresh_cost_chart()
+        self._update_total_cost()
 
         self.input_frame.set_enabled(False)
-        self.start_btn.configure(state="disabled")
-        self.cancel_btn.configure(state="normal")
+        self.options_panel.set_running(True)
 
         self.worker = PipelineWorker(self.config, self.gui_queue)
         self.worker.start(pdf_paths)
@@ -669,9 +549,9 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         n = len(pdf_paths)
         doc_word = "documento" if n == 1 else "documenti"
         phases = []
-        if run_ocr:
+        if self.config.run_ocr:
             phases.append(f"OCR [{self.config.ocr_model_id}]")
-        if run_extraction:
+        if self.config.run_extraction:
             phases.append(f"estrazione [{self.config.active_schema}]")
         self.log_frame.append(
             f"Avvio elaborazione di {n} {doc_word} — {' + '.join(phases)}"
@@ -684,8 +564,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _on_batch_complete(self, event: BatchCompleteEvent) -> None:
         self.input_frame.set_enabled(True)
-        self.start_btn.configure(state="normal")
-        self.cancel_btn.configure(state="disabled")
+        self.options_panel.set_running(False)
+        self.options_panel.set_can_start(bool(self.input_frame.get_file_paths()))
 
         ok = event.successful
         fail = event.failed
@@ -698,11 +578,16 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.log_frame.append(f"Completato — {ok}/{total} documenti elaborati con successo.")
         else:
             self.log_frame.append(
-                f"Completato — {ok} riusciti, {fail} errori su {total} documenti.", "WARNING"
-            )
+                f"Completato — {ok} riusciti, {fail} errori su {total} documenti.", "WARNING")
 
-    # ─── Settings ────────────────────────────────────────────────────────────
+    # ─── Toasts ──────────────────────────────────────────────────────────
+    def _show_toast(self, key, title, message, level="error"):
+        try:
+            self.toast_stack.show(key, title, message, level=level)
+        except Exception:
+            pass
 
+    # ─── Settings / dialogs ──────────────────────────────────────────────
     def _open_settings(self) -> None:
         SettingsWindow(self, self.config, self._on_settings_saved)
 
@@ -712,172 +597,73 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         self.config = config
-        self.run_ocr_var.set(config.run_ocr)
-        self.run_extraction_var.set(config.run_extraction)
-        self.model_var.set(config.ocr_model_id)
-        self.schema_var.set(config.active_schema)
-        self.rename_files_var.set(config.rename_files)
-        self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
-        self.output_mode_var.set(config.output_mode)
-        self._cartella_label.configure(text=self._short_dir_label(config.output_directory))
-        self._on_output_mode_changed()
-        self._on_rename_changed()
-        self._on_phases_changed()
-        if hasattr(self, "rename_batch_context_var"):
-            self.rename_batch_context_var.set(bool(getattr(config, "rename_use_batch_context", False)))
-        self._refresh_rename_strategy_ui()
+        self.options_panel.sync_from_config(config)
         save_config(config)
         self.log_frame.append("Impostazioni salvate.")
 
-    # ─── UI state helpers ────────────────────────────────────────────────────
-
-    def _on_phases_changed(self) -> None:
-        """Enable/disable model and schema dropdowns based on active features."""
-        ocr_on = self.run_ocr_var.get()
-        ext_on = self.run_extraction_var.get()
-        rename_on = self.rename_files_var.get()
-        model_state = "normal" if (ocr_on or ext_on or rename_on) else "disabled"
-        self.model_menu.configure(state=model_state)
-        self.schema_menu.configure(state="normal" if ext_on else "disabled")
-
-    def _on_rename_changed(self) -> None:
-        """Enable/disable rename mode dropdown."""
-        state = "normal" if self.rename_files_var.get() else "disabled"
-        self.rename_mode_menu.configure(state=state)
-        self._on_phases_changed()
-        self._refresh_rename_strategy_ui()
-
-    def _on_rename_strategy_changed(self) -> None:
-        """Persist rename strategy changes from main UI."""
-        self.config.rename_use_batch_context = bool(self.rename_batch_context_var.get())
-        save_config(self.config)
-        self._refresh_rename_strategy_ui()
-
-    def _refresh_rename_strategy_ui(self) -> None:
-        """Refresh main UI hints/buttons for rename configuration."""
-        if hasattr(self, "rename_strategy_label"):
-            self.rename_strategy_label.configure(text=self._get_rename_strategy_label())
-
-        rename_on = bool(self.rename_files_var.get())
-        if hasattr(self, "rename_strategy_row"):
-            if rename_on:
-                if not self.rename_strategy_row.winfo_manager():
-                    self.rename_strategy_row.pack(
-                        padx=12, pady=(0, 2), fill="x",
-                        before=self.rename_output_divider,
-                    )
-            else:
-                self.rename_strategy_row.pack_forget()
-        if hasattr(self, "rename_context_btn"):
-            self.rename_context_btn.configure(state="normal" if rename_on else "disabled")
-        if hasattr(self, "rename_batch_context_cb"):
-            self.rename_batch_context_cb.configure(state="normal" if rename_on else "disabled")
-
-    def _get_rename_strategy_label(self) -> str:
-        batch_ctx = bool(getattr(self.config, "rename_use_batch_context", False))
-        user_ctx = bool(getattr(self.config, "rename_use_user_context", False))
-        parts = ["Rinomina:"]
-        parts.append("batch-context" if batch_ctx else "classica")
-        if user_ctx:
-            parts.append("(+ contesto utente)")
-        return " ".join(parts)
-
     def _open_rename_context_dialog(self) -> None:
-        """Small dialog to edit user-provided rename context."""
         dlg = ctk.CTkToplevel(self)
-        dlg.title("Contesto utente aggiuntivo — Rinomina")
-        dlg.geometry("720x360")
+        dlg.title("Contesto utente — Rinomina")
+        dlg.geometry("720x380")
         dlg.resizable(True, True)
         dlg.transient(self)
         dlg.grab_set()
+        try:
+            dlg.configure(fg_color=theme.PAPER)
+        except Exception:
+            pass
 
         ctk.CTkLabel(
-            dlg,
-            text="Contesto utente aggiuntivo",
-            font=ctk.CTkFont(size=15, weight="bold"),
-        ).pack(padx=14, pady=(14, 4), anchor="w")
-
+            dlg, text="Contesto utente aggiuntivo",
+            font=theme.font(15, "bold"), text_color=theme.INK,
+        ).pack(padx=18, pady=(16, 4), anchor="w")
         ctk.CTkLabel(
-            dlg,
-            text=(
-                "Questo testo viene passato al modello durante la rinomina, sia in modalità classica "
-                "che batch-context. Usalo per indicare come vuoi che i nomi vengano costruiti."
-            ),
-            text_color="gray60",
-            wraplength=680,
-            justify="left",
-            font=ctk.CTkFont(size=11),
-        ).pack(padx=14, pady=(0, 10), anchor="w")
+            dlg, text=("Questo testo viene passato al modello durante la rinomina, "
+                       "in modalità classica e batch-context. Indica come vuoi che "
+                       "i nomi vengano costruiti."),
+            text_color=theme.INK_3, wraplength=680, justify="left",
+            font=theme.font(11),
+        ).pack(padx=18, pady=(0, 10), anchor="w")
 
-        enabled_var = ctk.BooleanVar(value=bool(getattr(self.config, "rename_use_user_context", False)))
+        enabled_var = ctk.BooleanVar(
+            value=bool(getattr(self.config, "rename_use_user_context", False)))
         cb = ctk.CTkCheckBox(
-            dlg,
-            text="Abilita contesto utente per la rinomina",
-            variable=enabled_var,
+            dlg, text="Abilita contesto utente per la rinomina",
+            variable=enabled_var, font=theme.font(11), text_color=theme.INK_2,
+            fg_color=theme.AMBER, hover_color=theme.AMBER_DEEP,
+            border_color=theme.RULE_STRONG,
         )
-        cb.pack(padx=14, pady=(0, 6), anchor="w")
+        cb.pack(padx=18, pady=(0, 6), anchor="w")
 
-        textbox = ctk.CTkTextbox(dlg, height=160, font=ctk.CTkFont(family="Consolas", size=11))
-        textbox.pack(padx=14, pady=(0, 10), fill="both", expand=True)
+        textbox = ctk.CTkTextbox(
+            dlg, height=160, font=theme.font(11, mono=True),
+            fg_color=theme.CARD, text_color=theme.INK,
+            border_width=1, border_color=theme.RULE,
+        )
+        textbox.pack(padx=18, pady=(0, 10), fill="both", expand=True)
         textbox.insert("1.0", getattr(self.config, "rename_user_context_text", "") or "")
 
-        def sync_enabled_state():
+        def sync_state():
             textbox.configure(state="normal" if enabled_var.get() else "disabled")
-
-        def on_toggle():
-            sync_enabled_state()
-
-        cb.configure(command=on_toggle)
-        sync_enabled_state()
+        cb.configure(command=sync_state)
+        sync_state()
 
         btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
-        btn_row.pack(padx=14, pady=(0, 14), fill="x")
+        btn_row.pack(padx=18, pady=(0, 16), fill="x")
 
         def on_save():
             self.config.rename_use_user_context = bool(enabled_var.get())
             self.config.rename_user_context_text = textbox.get("1.0", "end").strip()
             save_config(self.config)
-            self._refresh_rename_strategy_ui()
             dlg.destroy()
 
-        ctk.CTkButton(btn_row, text="Salva", width=110, command=on_save).pack(side="right", padx=(8, 0))
-        ctk.CTkButton(
-            btn_row,
-            text="Chiudi",
-            width=110,
-            fg_color="transparent",
-            border_width=1,
-            command=dlg.destroy,
-        ).pack(side="right")
+        theme.amber_button(btn_row, "Salva", width=110, command=on_save).pack(
+            side="right", padx=(8, 0))
+        theme.ghost_button(btn_row, "Chiudi", width=110, command=dlg.destroy).pack(
+            side="right")
 
-    def _on_output_mode_changed(self) -> None:
-        """Show/hide the folder-picker row based on the selected output mode."""
-        mode = self.output_mode_var.get()
-        if mode == "cartella":
-            self._cartella_row.pack(padx=12, pady=(2, 0), fill="x")
-        else:
-            self._cartella_row.pack_forget()
-
-    def _pick_output_folder(self) -> None:
-        from tkinter import filedialog
-        folder = filedialog.askdirectory(title="Seleziona cartella di output")
-        if folder:
-            self.config.output_directory = folder
-            self._cartella_label.configure(text=self._short_dir_label(folder))
-
-    @staticmethod
-    def _short_dir_label(path: str, maxlen: int = 40) -> str:
-        if not path:
-            return "Nessuna cartella selezionata"
-        p = path.replace("\\", "/")
-        return f"…{p[-(maxlen-1):]}" if len(p) > maxlen else p
-
-    # ─── SendTo shortcut ─────────────────────────────────────────────────────
-
+    # ─── SendTo shortcut (Windows) ───────────────────────────────────────
     def _check_sendto_shortcut(self) -> None:
-        import sys
-        import os
-        import subprocess
         from tkinter import messagebox
 
         if not getattr(sys, "frozen", False):
@@ -891,7 +677,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 self.config.asked_sendto = True
                 save_config(self.config)
             return
-
         if self.config.asked_sendto:
             return
 
@@ -921,15 +706,9 @@ oLink.Save
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
                 self.log_frame.append("Collegamento aggiunto al menu 'Invia a'.")
-                messagebox.showinfo(
-                    "Successo",
-                    "Collegamento aggiunto con successo al menu 'Invia a'.",
-                    parent=self,
-                )
             except Exception as e:
                 self.log_frame.append(
-                    f"Impossibile creare il collegamento: {e}", "ERROR"
-                )
+                    f"Impossibile creare il collegamento: {e}", "ERROR")
             finally:
                 if vbs_path.exists():
                     vbs_path.unlink()

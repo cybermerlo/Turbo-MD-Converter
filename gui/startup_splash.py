@@ -6,6 +6,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from gui.resources import resource_path
+
 
 class StartupSplash:
     def __init__(self, project_root: Path):
@@ -13,6 +15,12 @@ class StartupSplash:
         self.root.overrideredirect(True)
         self.root.configure(bg="#f5efe6")
         self.root.attributes("-topmost", True)
+        try:
+            icon_path = resource_path("logo.ico")
+            if icon_path.exists():
+                self.root.iconbitmap(str(icon_path))
+        except Exception:
+            pass
 
         width, height = 360, 180
         x = int((self.root.winfo_screenwidth() - width) / 2)
@@ -28,7 +36,7 @@ class StartupSplash:
         frame.pack(fill="both", expand=True, padx=1, pady=1)
 
         self._logo = None
-        logo_path = project_root / "logo.png"
+        logo_path = resource_path("logo.png")
         if logo_path.exists():
             try:
                 from PIL import Image, ImageTk

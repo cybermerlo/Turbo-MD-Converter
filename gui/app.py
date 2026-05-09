@@ -13,6 +13,7 @@ from tkinterdnd2 import DND_FILES, TkinterDnD
 
 from config.settings import AppConfig, save_config
 from gui import theme
+from gui.resources import resource_path
 from gui.frames.input_frame import InputFrame
 from gui.frames.log_frame import LogFrame
 from gui.frames.output_frame import OutputFrame
@@ -50,6 +51,12 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         theme.install_theme()
 
         self.title("Turbo MD Converter")
+        try:
+            icon_path = resource_path("logo.ico")
+            if icon_path.exists():
+                self.iconbitmap(str(icon_path))
+        except Exception:
+            pass
         self.geometry("1380x840")
         self.minsize(1180, 680)
         self.configure(fg_color=theme.PAPER)
@@ -99,7 +106,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         # Brand mark
         try:
             from PIL import Image
-            logo_path = Path(__file__).parent.parent / "logo.png"
+            logo_path = resource_path("logo.png")
             if logo_path.exists():
                 img = Image.open(logo_path)
                 self.logo_img = ctk.CTkImage(light_image=img, dark_image=img,

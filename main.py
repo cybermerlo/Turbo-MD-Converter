@@ -9,15 +9,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import load_config
+from gui.resources import app_base_dir
 from gui.startup_splash import StartupSplash
 from utils.logging_config import setup_logging
 
 
 def main():
     setup_logging()
-    splash = StartupSplash(PROJECT_ROOT)
+    runtime_root = app_base_dir()
+    splash = StartupSplash(runtime_root)
     splash.set_status("Caricamento configurazione...")
-    config = load_config(project_dir=PROJECT_ROOT)
+    config = load_config(project_dir=runtime_root)
 
     # Elabora gli argomenti da riga di comando per i file/cartelle passati (es. dal menu contestuale)
     initial_files = []

@@ -241,11 +241,13 @@ class InputFrame(ctk.CTkFrame):
         self.file_list = ctk.CTkScrollableFrame(
             list_wrap,
             fg_color=theme.PAPER,
-            scrollbar_button_color=theme.RULE_STRONG,
+            scrollbar_fg_color=theme.PAPER,
+            scrollbar_button_color=theme.RULE,
             scrollbar_button_hover_color=theme.INK_3,
             corner_radius=0,
         )
         self.file_list.grid(row=0, column=0, sticky="nsew")
+        theme.autohide_scrollable_frame(self.file_list)
 
         self._empty_lbl = ctk.CTkLabel(
             self.file_list,

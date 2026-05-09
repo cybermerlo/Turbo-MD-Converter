@@ -146,3 +146,83 @@ def danger_button(parent, text, command=None, **kwargs):
                          fg_color=ERR, hover_color="#8c3a2a",
                          text_color="#ffffff", border_width=0,
                          corner_radius=6, font=font(13, "bold"), **kwargs)
+
+
+def soften_scrollbar(scrollbar, *, track_color=PAPER, thumb_color=RULE):
+    try:
+        scrollbar.configure(
+            width=8,
+            corner_radius=4,
+            border_spacing=2,
+            fg_color=track_color,
+            button_color=thumb_color,
+            button_hover_color=RULE_STRONG,
+        )
+    except Exception:
+        pass
+
+
+def soften_scrollable_frame(scrollable_frame):
+    scrollbar = getattr(scrollable_frame, "_scrollbar", None)
+    if scrollbar is not None:
+        soften_scrollbar(scrollbar, track_color=PAPER, thumb_color=RULE)
+
+
+def autohide_scrollable_frame(scrollable_frame):
+    scrollbar = getattr(scrollable_frame, "_scrollbar", None)
+    canvas = getattr(scrollable_frame, "_parent_canvas", None)
+    orientation = getattr(scrollable_frame, "_orientation", "vertical")
+    if scrollbar is None or canvas is None:
+        return
+
+    soften_scrollbar(scrollbar, track_color=PAPER, thumb_color=RULE)
+    visible = {"value": True}
+
+    def _needs_scroll():
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return False
+        if orientation == "horizontal":
+            return (bbox[2] - bbox[0]) > canvas.winfo_width() + 1
+        return (bbox[3] - bbox[1]) > canvas.winfo_height() + 1
+
+    def _sync_visibility():
+        needs_scroll = _needs_scroll()
+        if needs_scroll and not visible["value"]:
+            scrollbar.grid()
+            visible["value"] = True
+        elif not needs_scroll and visible["value"]:
+            if orientation == "horizontal":
+                canvas.xview_moveto(0)
+            else:
+                canvas.yview_moveto(0)
+            scrollbar.grid_remove()
+            visible["value"] = False
+
+    def _set(first, last):
+        scrollbar.set(first, last)
+        canvas.after_idle(_sync_visibility)
+
+    if orientation == "horizontal":
+        canvas.configure(xscrollcommand=_set)
+    else:
+        canvas.configure(yscrollcommand=_set)
+
+    scrollable_frame.bind(
+        "<Configure>", lambda _e: canvas.after_idle(_sync_visibility), add="+",
+    )
+    canvas.bind("<Configure>", lambda _e: canvas.after_idle(_sync_visibility), add="+")
+    canvas.after_idle(_sync_visibility)
+
+
+def autohide_text_scrollbar(text_widget, scrollbar, show, hide):
+    soften_scrollbar(scrollbar, track_color=CARD, thumb_color=RULE)
+
+    def _set(first, last):
+        if float(first) <= 0 and float(last) >= 1:
+            hide()
+        else:
+            show()
+        scrollbar.set(first, last)
+
+    text_widget.configure(yscrollcommand=_set)

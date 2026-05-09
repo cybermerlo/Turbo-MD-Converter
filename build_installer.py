@@ -32,6 +32,8 @@ INSTALLER_DIR = ROOT / "installer"
 VERSION_ISS   = INSTALLER_DIR / "version.iss"
 ISS_SCRIPT    = INSTALLER_DIR / "turbomd.iss"
 OUTPUT_DIR    = INSTALLER_DIR / "output"
+LOGO_PNG      = ROOT / "logo.png"
+LOGO_ICO      = ROOT / "logo.ico"
 
 # ── Dati applicazione (sincronizzati con version.py) ─────────────────────────
 APP_NAME      = "Turbo MD Converter"
@@ -46,6 +48,37 @@ INNO_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
     r"C:\Program Files\Inno Setup 5\ISCC.exe",
 ]
+
+ICON_SIZES = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+
+
+def ensure_icon_asset() -> None:
+    """Genera logo.ico multi-risoluzione dal logo PNG usato dalla UI."""
+    if not LOGO_PNG.exists():
+        print(f"[icon]  Logo PNG non trovato: {LOGO_PNG}")
+        sys.exit(1)
+
+    try:
+        from PIL import Image
+    except ImportError:
+        print("[icon]  Pillow non installato. Esegui: pip install Pillow")
+        sys.exit(1)
+
+    try:
+        with Image.open(LOGO_PNG) as source:
+            image = source.convert("RGBA")
+            side = max(image.size)
+            square = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+            offset = ((side - image.width) // 2, (side - image.height) // 2)
+            square.paste(image, offset)
+            image = square
+            image.save(LOGO_ICO, format="ICO", sizes=ICON_SIZES)
+    except OSError as exc:
+        print(f"[icon]  Impossibile generare {LOGO_ICO}: {exc}")
+        sys.exit(1)
+
+    sizes = ", ".join(f"{width}x{height}" for width, height in ICON_SIZES)
+    print(f"[icon]  logo.ico aggiornato da logo.png ({sizes})")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -283,6 +316,8 @@ def main():
     if args.version_only:
         print("\n[build]  Fatto (solo versione aggiornata).")
         return
+
+    ensure_icon_asset()
 
     # Step 2: eseguibile
     if args.iss_only:

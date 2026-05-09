@@ -116,10 +116,13 @@ class OptionsPanel(ctk.CTkFrame):
         # ── Scrollable middle ─────────────────────────────────────────────
         scroll = ctk.CTkScrollableFrame(
             self, fg_color=theme.PAPER, corner_radius=0,
-            scrollbar_button_color=theme.RULE_STRONG,
+            scrollbar_fg_color=theme.PAPER,
+            scrollbar_button_color=theme.RULE,
+            scrollbar_button_hover_color=theme.INK_3,
         )
         scroll.grid(row=1, column=0, sticky="nsew", padx=8, pady=0)
         scroll.grid_columnconfigure(0, weight=1)
+        theme.autohide_scrollable_frame(scroll)
 
         # Vars
         self.run_ocr_var = ctk.BooleanVar(value=config.run_ocr)

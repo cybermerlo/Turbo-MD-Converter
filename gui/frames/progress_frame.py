@@ -16,26 +16,27 @@ class ProgressFrame(ctk.CTkFrame):
         theme.hairline(self).pack(side="bottom", fill="x")
 
         inner = ctk.CTkFrame(self, fg_color="transparent")
-        inner.pack(fill="x", padx=18, pady=12)
+        inner.pack(fill="x", padx=18, pady=14)
 
         self._count = ctk.CTkLabel(
             inner, text="0 / 0",
-            font=theme.font(13, "bold", mono=True), text_color=theme.INK_2,
+            font=theme.font(14, "bold", mono=True), text_color=theme.INK_2,
         )
         self._count.pack(side="left", padx=(0, 14))
 
         self._bar = ctk.CTkProgressBar(
-            inner, height=6, corner_radius=3,
+            inner, height=14, corner_radius=7,
             fg_color=theme.PAPER_2,
-            progress_color=theme.INK,
-            border_width=0,
+            progress_color=theme.AMBER,
+            border_width=1,
+            border_color=theme.RULE_STRONG,
         )
         self._bar.pack(side="left", fill="x", expand=True, padx=(0, 14))
         self._bar.set(0)
 
         self._state = ctk.CTkLabel(
             inner, text="In attesa",
-            font=theme.font(11), text_color=theme.INK_3,
+            font=theme.font(12), text_color=theme.INK_3,
         )
         self._state.pack(side="left")
 
@@ -45,7 +46,7 @@ class ProgressFrame(ctk.CTkFrame):
     def set_batch(self, total_files: int):
         self._count.configure(text=f"0 / {total_files}", text_color=theme.INK_2)
         self._bar.set(0)
-        self._bar.configure(progress_color=theme.INK)
+        self._bar.configure(progress_color=theme.AMBER)
         doc = "documento" if total_files == 1 else "documenti"
         self._state.configure(
             text=f"Elaborazione di {total_files} {doc} in corso…",
@@ -90,7 +91,7 @@ class ProgressFrame(ctk.CTkFrame):
     def reset(self):
         self._count.configure(text="0 / 0", text_color=theme.INK_2)
         self._bar.set(0)
-        self._bar.configure(progress_color=theme.INK)
+        self._bar.configure(progress_color=theme.AMBER)
         self._state.configure(text="In attesa", text_color=theme.INK_3)
 
 

@@ -18,7 +18,10 @@ a = Analysis(
     ['main.py'],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(PROJECT_ROOT / 'logo.ico'), '.'),
+        (str(PROJECT_ROOT / 'logo.png'), '.'),
+    ],
     hiddenimports=[
         'customtkinter',
         'customtkinter.windows',
@@ -58,5 +61,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Puoi aggiungere un'icona .ico qui se ne hai una
+    icon=str(PROJECT_ROOT / 'logo.ico'),
 )

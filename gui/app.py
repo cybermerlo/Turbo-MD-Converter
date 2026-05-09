@@ -50,8 +50,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         theme.install_theme()
 
         self.title("Turbo MD Converter")
-        self.geometry("1320x820")
-        self.minsize(1120, 640)
+        self.geometry("1380x840")
+        self.minsize(1180, 680)
         self.configure(fg_color=theme.PAPER)
 
         self.config = config
@@ -81,9 +81,9 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     # ─── Layout ──────────────────────────────────────────────────────────────
     def _build_layout(self) -> None:
-        self.grid_columnconfigure(0, weight=0)   # sidebar
-        self.grid_columnconfigure(1, weight=1)   # canvas
-        self.grid_columnconfigure(2, weight=0)   # options
+        self.grid_columnconfigure(0, weight=0, minsize=340)  # sidebar
+        self.grid_columnconfigure(1, weight=0, minsize=420)  # options
+        self.grid_columnconfigure(2, weight=1, minsize=360)  # preview/log canvas
         self.grid_rowconfigure(1, weight=1)      # row 0 = topbar, row 1 = body
 
         # ── Top bar ──────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # ── Sidebar ──────────────────────────────────────────────────────
         sidebar = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
-                               width=320)
+                               width=340)
         sidebar.grid(row=1, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
         # vertical hairline on the right
@@ -149,7 +149,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         # ── Canvas (center column) ───────────────────────────────────────
         canvas = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0)
-        canvas.grid(row=1, column=1, sticky="nsew")
+        canvas.grid(row=1, column=2, sticky="nsew")
         canvas.grid_columnconfigure(0, weight=1)
         canvas.grid_rowconfigure(1, weight=1)   # output frame stretches
 
@@ -162,14 +162,14 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.log_frame = LogFrame(canvas)
         self.log_frame.grid(row=2, column=0, sticky="ew")
 
-        # ── Options panel (right column) ─────────────────────────────────
+        # ── Options panel (middle column) ────────────────────────────────
         opts_wrap = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0,
-                                 width=340)
-        opts_wrap.grid(row=1, column=2, sticky="nsew")
+                                 width=420)
+        opts_wrap.grid(row=1, column=1, sticky="nsew")
         opts_wrap.grid_propagate(False)
         rule2 = ctk.CTkFrame(opts_wrap, width=1, fg_color=theme.RULE,
                              corner_radius=0)
-        rule2.pack(side="left", fill="y")
+        rule2.pack(side="right", fill="y")
 
         self.options_panel = OptionsPanel(
             opts_wrap, self.config,
@@ -579,6 +579,20 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self.log_frame.append(
                 f"Completato — {ok} riusciti, {fail} errori su {total} documenti.", "WARNING")
+        self._reset_specific_output_mode_after_batch()
+
+    def _reset_specific_output_mode_after_batch(self) -> None:
+        if self.config.output_mode != "cartella":
+            return
+        self.config.output_mode = "accanto"
+        self.options_panel.sync_from_config(self.config)
+        try:
+            save_config(self.config)
+        except OSError:
+            pass
+        self.log_frame.append(
+            "Destinazione output ripristinata: accanto al file originale."
+        )
 
     # ─── Toasts ──────────────────────────────────────────────────────────
     def _show_toast(self, key, title, message, level="error"):

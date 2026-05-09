@@ -16,7 +16,7 @@ class LogFrame(ctk.CTkFrame):
 
     def __init__(self, master, **kwargs):
         super().__init__(master, fg_color=theme.PAPER, corner_radius=0, **kwargs)
-        self._open = False
+        self._open = True
         self._error_count = 0
         self._warn_count = 0
         self._total_count = 0
@@ -34,7 +34,7 @@ class LogFrame(ctk.CTkFrame):
         head_inner.pack(fill="both", expand=True, padx=18, pady=0)
 
         self.chev_lbl = ctk.CTkLabel(
-            head_inner, text="▸", font=theme.font(11, mono=True),
+            head_inner, text="▾", font=theme.font(11, mono=True),
             text_color=theme.INK_3, width=14,
         )
         self.chev_lbl.pack(side="left")
@@ -62,7 +62,12 @@ class LogFrame(ctk.CTkFrame):
             w.bind("<Button-1>", lambda _e: self.toggle())
 
         # ── Body (textbox) ────────────────────────────────────────────────
-        self.body_holder = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0)
+        self.body_holder = ctk.CTkFrame(
+            self, fg_color=theme.PAPER, corner_radius=0,
+            height=self.OPEN_HEIGHT,
+        )
+        self.body_holder.pack(fill="x", side="bottom")
+        self.body_holder.pack_propagate(False)
 
         self.textbox = tk.Text(
             self.body_holder,
@@ -74,10 +79,22 @@ class LogFrame(ctk.CTkFrame):
         )
         self.textbox.pack(fill="both", expand=True, side="left")
 
-        sb = ctk.CTkScrollbar(self.body_holder, command=self.textbox.yview,
-                              button_color=theme.RULE_STRONG)
-        sb.pack(side="right", fill="y")
-        self.textbox.configure(yscrollcommand=sb.set)
+        sb = ctk.CTkScrollbar(self.body_holder, command=self.textbox.yview)
+        scrollbar_visible = {"value": False}
+
+        def show_scrollbar():
+            if not scrollbar_visible["value"]:
+                sb.pack(side="right", fill="y")
+                scrollbar_visible["value"] = True
+
+        def hide_scrollbar():
+            if scrollbar_visible["value"]:
+                sb.pack_forget()
+                scrollbar_visible["value"] = False
+
+        theme.autohide_text_scrollbar(
+            self.textbox, sb, show_scrollbar, hide_scrollbar,
+        )
 
         self.textbox.tag_config("ts",      foreground=theme.INK_4)
         self.textbox.tag_config("info",    foreground=theme.INK_2)
@@ -94,7 +111,7 @@ class LogFrame(ctk.CTkFrame):
             return
         self._open = opened
         if opened:
-            self.body_holder.pack(fill="both", expand=True, side="bottom")
+            self.body_holder.pack(fill="x", side="bottom")
             self.chev_lbl.configure(text="▾")
         else:
             self.body_holder.pack_forget()

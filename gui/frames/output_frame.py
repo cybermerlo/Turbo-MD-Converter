@@ -33,6 +33,10 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.on_saved = on_saved
         self._save_after_id: str | None = None
         self._highlight_after_id: str | None = None
+        self._search_after_id: str | None = None
+        self._search_matches: list[tuple[str, str]] = []
+        self._search_index = -1
+        self.search_var = ctk.StringVar(value="")
 
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(padx=18, pady=(14, 6), fill="x")
@@ -63,6 +67,45 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             )
             btn.pack(side="left", padx=(0, 4))
 
+        search_box = ctk.CTkFrame(
+            toolbar, fg_color=theme.CARD, corner_radius=6,
+            border_width=1, border_color=theme.RULE,
+        )
+        search_box.pack(side="right")
+
+        self.search_entry = ctk.CTkEntry(
+            search_box, textvariable=self.search_var,
+            placeholder_text="Cerca", width=220, height=28,
+            fg_color=theme.CARD_2, border_color=theme.RULE,
+            text_color=theme.INK, font=theme.font(11),
+        )
+        self.search_entry.pack(side="left", padx=(6, 4), pady=5)
+
+        self.search_count_label = ctk.CTkLabel(
+            search_box, text="",
+            width=54, font=theme.font(10, mono=True), text_color=theme.INK_3,
+        )
+        self.search_count_label.pack(side="left", padx=(0, 2))
+
+        self.search_prev_btn = theme.ghost_button(
+            search_box, "↑", width=30, height=28,
+            command=lambda: self._move_search(-1),
+        )
+        self.search_prev_btn.pack(side="left", padx=(0, 4), pady=5)
+
+        self.search_next_btn = theme.ghost_button(
+            search_box, "↓", width=30, height=28,
+            command=lambda: self._move_search(1),
+        )
+        self.search_next_btn.pack(side="left", padx=(0, 4), pady=5)
+
+        self.search_clear_btn = theme.ghost_button(
+            search_box, "×", width=30, height=28,
+            command=self._clear_search,
+        )
+        self.search_clear_btn.pack(side="left", padx=(0, 6), pady=5)
+        self.search_var.trace_add("write", lambda *_: self._schedule_search_refresh())
+
         body = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=8,
                             border_width=1, border_color=theme.RULE)
         body.pack(padx=18, pady=(0, 14), fill="both", expand=True)
@@ -75,15 +118,32 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             insertbackground=theme.INK,
             font=(theme.ui_family(), 12),
         )
-        scrollbar = ctk.CTkScrollbar(body, command=self.text.yview,
-                                     button_color=theme.RULE_STRONG)
-        self.text.configure(yscrollcommand=scrollbar.set)
+        scrollbar = ctk.CTkScrollbar(body, command=self.text.yview)
         self.text.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        scrollbar_visible = {"value": False}
+
+        def show_editor_scrollbar():
+            if not scrollbar_visible["value"]:
+                scrollbar.pack(side="right", fill="y")
+                scrollbar_visible["value"] = True
+
+        def hide_editor_scrollbar():
+            if scrollbar_visible["value"]:
+                scrollbar.pack_forget()
+                scrollbar_visible["value"] = False
+
+        theme.autohide_text_scrollbar(
+            self.text, scrollbar, show_editor_scrollbar, hide_editor_scrollbar,
+        )
 
         self._configure_tags()
         self._load_file()
         self.text.bind("<<Modified>>", self._on_modified)
+        self.text.bind("<Control-f>", self._focus_search)
+        self.bind("<Control-f>", self._focus_search)
+        self.search_entry.bind("<Return>", lambda _e: self._move_search(1))
+        self.search_entry.bind("<Shift-Return>", lambda _e: self._move_search(-1))
+        self.search_entry.bind("<Escape>", lambda _e: self._clear_search())
         self.protocol("WM_DELETE_WINDOW", self._close)
 
     def _configure_tags(self) -> None:
@@ -101,6 +161,11 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.text.tag_configure("italic", font=italic)
         self.text.tag_configure("underline", font=underline)
         self.text.tag_configure("code", font=mono, background=theme.PAPER_2)
+        self.text.tag_configure("search_match", background=theme.AMBER_SOFT)
+        self.text.tag_configure("search_current",
+                                background=theme.AMBER, foreground="#ffffff")
+        self.text.tag_raise("search_match")
+        self.text.tag_raise("search_current")
 
     def _load_file(self) -> None:
         try:
@@ -120,8 +185,11 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
             self.after_cancel(self._save_after_id)
         if self._highlight_after_id:
             self.after_cancel(self._highlight_after_id)
+        if self._search_after_id:
+            self.after_cancel(self._search_after_id)
         self._save_after_id = self.after(500, self._save)
         self._highlight_after_id = self.after(350, self._apply_markdown_tags)
+        self._search_after_id = self.after(380, self._refresh_search_highlights)
 
     def _save(self) -> None:
         self._save_after_id = None
@@ -152,6 +220,84 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.text.focus_set()
         self.text.edit_modified(True)
         self._on_modified()
+
+    def _focus_search(self, _e=None):
+        self.search_entry.focus_set()
+        self.search_entry.select_range(0, "end")
+        return "break"
+
+    def _clear_search(self, _e=None):
+        self.search_var.set("")
+        self.text.tag_remove("search_match", "1.0", "end")
+        self.text.tag_remove("search_current", "1.0", "end")
+        self._search_matches = []
+        self._search_index = -1
+        self.search_count_label.configure(text="")
+        self.text.focus_set()
+        return "break"
+
+    def _schedule_search_refresh(self):
+        if self._search_after_id:
+            self.after_cancel(self._search_after_id)
+        self._search_after_id = self.after(120, self._refresh_search_highlights)
+
+    def _refresh_search_highlights(self):
+        self._search_after_id = None
+        self.text.tag_remove("search_match", "1.0", "end")
+        self.text.tag_remove("search_current", "1.0", "end")
+        query = self.search_var.get()
+        self._search_matches = []
+        self._search_index = -1
+        if not query:
+            self.search_count_label.configure(text="")
+            return
+
+        start = "1.0"
+        while True:
+            match_start = self.text.search(query, start, "end", nocase=True)
+            if not match_start:
+                break
+            match_end = f"{match_start}+{len(query)}c"
+            self.text.tag_add("search_match", match_start, match_end)
+            self._search_matches.append((match_start, match_end))
+            start = match_end
+
+        if not self._search_matches:
+            self.search_count_label.configure(text="0")
+            return
+
+        insert = self.text.index("insert")
+        selected = 0
+        for idx, (match_start, _match_end) in enumerate(self._search_matches):
+            if self.text.compare(match_start, ">=", insert):
+                selected = idx
+                break
+        self._select_search_match(selected, scroll=False)
+
+    def _move_search(self, step: int):
+        if not self.search_var.get():
+            self._focus_search()
+            return "break"
+        if not self._search_matches:
+            self._refresh_search_highlights()
+        if not self._search_matches:
+            return "break"
+        self._select_search_match((self._search_index + step) % len(self._search_matches))
+        return "break"
+
+    def _select_search_match(self, index: int, scroll: bool = True):
+        if not self._search_matches:
+            return
+        self._search_index = max(0, min(index, len(self._search_matches) - 1))
+        match_start, match_end = self._search_matches[self._search_index]
+        self.text.tag_remove("search_current", "1.0", "end")
+        self.text.tag_add("search_current", match_start, match_end)
+        self.text.mark_set("insert", match_start)
+        if scroll:
+            self.text.see(match_start)
+        self.search_count_label.configure(
+            text=f"{self._search_index + 1}/{len(self._search_matches)}"
+        )
 
     def _apply_markdown_tags(self) -> None:
         self._highlight_after_id = None
@@ -217,6 +363,10 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         if self._save_after_id:
             self.after_cancel(self._save_after_id)
             self._save()
+        if self._highlight_after_id:
+            self.after_cancel(self._highlight_after_id)
+        if self._search_after_id:
+            self.after_cancel(self._search_after_id)
         self.destroy()
 
 
@@ -229,7 +379,9 @@ class OutputFrame(ctk.CTkFrame):
         self._output_dir: Path | None = None
         self._all_md_paths: list[Path] = []
         self._current_md_path: Path | None = None
+        self._combined_md_path: Path | None = None
         self._editor_window: MarkdownEditorWindow | None = None
+        self._combined_editor_window: MarkdownEditorWindow | None = None
         self._merge_items: list[dict[str, object]] = []
         self._merge_path_keys: set[Path] = set()
         self._merge_window: ctk.CTkToplevel | None = None
@@ -248,23 +400,23 @@ class OutputFrame(ctk.CTkFrame):
         )
         self.title_lbl.pack(side="left", fill="x", expand=True)
 
-        self.editor_btn = theme.ghost_button(
-            toolbar, "Apri editor", width=110, height=28,
-            command=self.open_markdown_preview,
+        doc_actions = ctk.CTkFrame(
+            toolbar, fg_color=theme.CARD, corner_radius=6,
+            border_width=1, border_color=theme.RULE,
         )
-        self.editor_btn.pack(side="right", padx=(6, 0))
+        doc_actions.pack(side="right", padx=(10, 0))
 
         self.copy_btn = theme.ghost_button(
-            toolbar, "Copia", width=80, height=28,
+            doc_actions, "Copia", width=72, height=28,
             command=self._copy_current,
         )
-        self.copy_btn.pack(side="right")
+        self.copy_btn.pack(side="left", padx=(6, 4), pady=5)
 
-        self.merge_btn = theme.ghost_button(
-            toolbar, "Merge MD", width=90, height=28,
-            command=self._open_merge_dialog,
+        self.editor_btn = theme.ghost_button(
+            doc_actions, "Apri editor", width=106, height=28,
+            command=self.open_markdown_preview,
         )
-        self.merge_btn.pack(side="right", padx=(0, 6))
+        self.editor_btn.pack(side="left", padx=(0, 6), pady=5)
 
         # ── Preview body ──────────────────────────────────────────────────
         body = ctk.CTkFrame(self, fg_color=theme.CARD, corner_radius=8,
@@ -284,10 +436,22 @@ class OutputFrame(ctk.CTkFrame):
         )
         self.md_textbox.grid(row=0, column=0, sticky="nsew")
 
-        sb = ctk.CTkScrollbar(body, command=self.md_textbox.yview,
-                              button_color=theme.RULE_STRONG)
-        sb.grid(row=0, column=1, sticky="ns")
-        self.md_textbox.configure(yscrollcommand=sb.set)
+        sb = ctk.CTkScrollbar(body, command=self.md_textbox.yview)
+        preview_scrollbar_visible = {"value": False}
+
+        def show_preview_scrollbar():
+            if not preview_scrollbar_visible["value"]:
+                sb.grid(row=0, column=1, sticky="ns")
+                preview_scrollbar_visible["value"] = True
+
+        def hide_preview_scrollbar():
+            if preview_scrollbar_visible["value"]:
+                sb.grid_remove()
+                preview_scrollbar_visible["value"] = False
+
+        theme.autohide_text_scrollbar(
+            self.md_textbox, sb, show_preview_scrollbar, hide_preview_scrollbar,
+        )
 
         self._setup_md_tags()
 
@@ -296,26 +460,55 @@ class OutputFrame(ctk.CTkFrame):
         if actions_parent is None:
             action_row.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 12))
 
+        combined_actions = ctk.CTkFrame(
+            action_row, fg_color=theme.CARD, corner_radius=6,
+            border_width=1, border_color=theme.RULE,
+        )
+        combined_actions.pack(anchor="w", pady=(0, 6))
+        self.copy_all_btn = theme.ghost_button(
+            combined_actions, "Copia tutti",
+            command=self._copy_all_md, state="disabled",
+            width=100, height=28,
+        )
+        self.copy_all_btn.pack(side="left", padx=(6, 4), pady=5)
+
+        self.export_all_btn = theme.ghost_button(
+            combined_actions, "Salva unito...",
+            command=self._export_all_md, state="disabled",
+            width=110, height=28,
+        )
+        self.export_all_btn.pack(side="left", padx=(0, 4), pady=5)
+
+        self.combined_editor_btn = theme.ghost_button(
+            combined_actions, "Apri editor",
+            command=self._open_combined_editor, state="disabled",
+            width=110, height=28,
+        )
+        self.combined_editor_btn.pack(side="left", padx=(0, 6), pady=5)
+
+        utility_actions = ctk.CTkFrame(
+            action_row, fg_color="transparent",
+        )
+        utility_actions.pack(anchor="w")
+
         self.open_folder_btn = theme.ghost_button(
-            action_row, "Apri cartella output",
+            utility_actions, "Apri cartella output",
             command=self._open_output_folder, state="disabled",
             width=160, height=28,
         )
         self.open_folder_btn.pack(side="left")
 
-        self.copy_all_btn = theme.ghost_button(
-            action_row, "Copia tutti",
-            command=self._copy_all_md, state="disabled",
-            width=100, height=28,
+        self.merge_btn = theme.ghost_button(
+            utility_actions, "Merge MD", width=90, height=28,
+            command=self._open_merge_dialog,
         )
-        self.copy_all_btn.pack(side="left", padx=(6, 0))
+        self.merge_btn.pack(side="left", padx=(6, 0))
 
-        self.export_all_btn = theme.ghost_button(
-            action_row, "Salva unito…",
-            command=self._export_all_md, state="disabled",
-            width=110, height=28,
+        self.clear_preview_btn = theme.ghost_button(
+            utility_actions, "Pulisci", width=78, height=28,
+            command=self.clear_preview,
         )
-        self.export_all_btn.pack(side="left", padx=(6, 0))
+        self.clear_preview_btn.pack(side="left", padx=(6, 0))
 
         # Compat shims (referenced by app.py drag-drop registration)
         self.tabview = self
@@ -440,9 +633,11 @@ class OutputFrame(ctk.CTkFrame):
 
     def set_all_mds(self, md_paths: list[Path]) -> None:
         self._all_md_paths = [p for p in md_paths if p.exists()]
+        self._combined_md_path = None
         if self._all_md_paths:
             self.copy_all_btn.configure(state="normal")
             self.export_all_btn.configure(state="normal")
+            self.combined_editor_btn.configure(state="normal")
 
     def add_merge_paths(self, paths: list[Path]) -> None:
         added = 0
@@ -462,8 +657,10 @@ class OutputFrame(ctk.CTkFrame):
     def clear(self) -> None:
         self.clear_preview()
         self._all_md_paths = []
+        self._combined_md_path = None
         self.copy_all_btn.configure(state="disabled")
         self.export_all_btn.configure(state="disabled")
+        self.combined_editor_btn.configure(state="disabled")
 
     def set_enabled(self, enabled: bool) -> None:
         pass
@@ -662,6 +859,25 @@ class OutputFrame(ctk.CTkFrame):
                 pass
         return "\n\n---\n\n".join(parts)
 
+    def _default_combined_path(self) -> Path | None:
+        if self._combined_md_path:
+            return self._combined_md_path
+        if self._output_dir and self._output_dir.exists():
+            return self._output_dir / "documenti_uniti.md"
+        for path in self._all_md_paths:
+            if path.parent.exists():
+                return path.parent / "documenti_uniti.md"
+        return None
+
+    def _write_combined_md(self, path: Path, content: str) -> bool:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        except OSError:
+            return False
+        self._combined_md_path = path
+        return True
+
     def _copy_all_md(self) -> None:
         combined = self._build_combined_md()
         if not combined:
@@ -685,11 +901,35 @@ class OutputFrame(ctk.CTkFrame):
         if not save_path:
             return
         try:
-            Path(save_path).write_text(combined, encoding="utf-8")
-            self.export_all_btn.configure(text="✓ Salvato")
-            self.after(1800, lambda: self.export_all_btn.configure(text="Salva unito…"))
+            ok = self._write_combined_md(Path(save_path), combined)
+            if ok:
+                self.export_all_btn.configure(text="✓ Salvato")
+                self.after(1800, lambda: self.export_all_btn.configure(text="Salva unito..."))
         except OSError:
             pass
+
+    def _open_combined_editor(self) -> None:
+        if self._combined_editor_window and self._combined_editor_window.winfo_exists():
+            self._combined_editor_window.lift()
+            self._combined_editor_window.focus()
+            return
+        combined = self._build_combined_md()
+        if not combined:
+            return
+        path = self._default_combined_path()
+        if path is None:
+            save_path = filedialog.asksaveasfilename(
+                title="Salva MD unito",
+                defaultextension=".md",
+                filetypes=[("Markdown", "*.md"), ("Testo", "*.txt"), ("Tutti i file", "*.*")],
+                initialfile="documenti_uniti.md",
+            )
+            if not save_path:
+                return
+            path = Path(save_path)
+        if not self._write_combined_md(path, combined):
+            return
+        self._combined_editor_window = MarkdownEditorWindow(self, path)
 
     def _open_output_folder(self) -> None:
         if self._output_dir and self._output_dir.exists():

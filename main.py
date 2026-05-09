@@ -1,6 +1,7 @@
 """Entry point for OCR + LangExtract application."""
 
 import sys
+import tkinter as tk
 from pathlib import Path
 
 # Add project root to sys.path for local imports
@@ -41,6 +42,7 @@ def main():
         app = TurboMDConverterApp(config, initial_files=initial_files)
     finally:
         splash.close()
+    tk._default_root = app
     app.mainloop()
 
 

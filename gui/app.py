@@ -75,6 +75,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._build_layout()
         self._setup_drag_drop()
+        self._setup_paste_shortcut()
         self.bind("<Delete>", self._on_delete_key)
         self._start_queue_polling()
 
@@ -237,6 +238,46 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         path_objs = self._paths_from_drop_event(event)
         self.input_frame.add_paths(path_objs)
         return event.action
+
+    def _setup_paste_shortcut(self) -> None:
+        self.bind_all("<Control-v>", self._on_paste_shortcut, add="+")
+        self.bind_all("<Control-V>", self._on_paste_shortcut, add="+")
+
+    def _on_paste_shortcut(self, event=None):
+        focus = self.focus_get()
+        if self._focus_is_text_input(focus):
+            return None
+
+        if focus is not None and focus is not self:
+            if not self._is_descendant_of(focus, self.input_frame):
+                return None
+
+        if self.input_frame.paste_from_clipboard():
+            return "break"
+        return None
+
+    @staticmethod
+    def _focus_is_text_input(widget) -> bool:
+        if widget is None:
+            return False
+        try:
+            widget_class = widget.winfo_class().lower()
+        except Exception:
+            return False
+        return "entry" in widget_class or "text" in widget_class
+
+    def _is_descendant_of(self, widget, parent) -> bool:
+        while widget is not None:
+            if widget is parent:
+                return True
+            try:
+                parent_name = widget.winfo_parent()
+                if not parent_name:
+                    return False
+                widget = self.nametowidget(parent_name)
+            except Exception:
+                return False
+        return False
 
     def _paths_from_drop_event(self, event) -> list[Path]:
         if not event.data:
@@ -408,6 +449,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         v = self.options_panel.get_values()
         self.config.run_ocr = v["run_ocr"]
         self.config.run_extraction = v["run_extraction"]
+        self.config.email_attachments_separate = bool(v["email_attachments_separate"])
         self.config.ocr_model_id = v["model"]
         self.config.extraction_model_id = v["model"]
         self.config.active_schema = v["schema"]

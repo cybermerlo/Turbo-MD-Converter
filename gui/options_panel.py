@@ -127,6 +127,8 @@ class OptionsPanel(ctk.CTkFrame):
         # Vars
         self.run_ocr_var = ctk.BooleanVar(value=config.run_ocr)
         self.run_extraction_var = ctk.BooleanVar(value=config.run_extraction)
+        self.email_attachments_separate_var = ctk.BooleanVar(
+            value=bool(getattr(config, "email_attachments_separate", False)))
         self.rename_files_var = ctk.BooleanVar(value=config.rename_files)
         self.rename_batch_context_var = ctk.BooleanVar(
             value=bool(getattr(config, "rename_use_batch_context", False)))
@@ -157,9 +159,18 @@ class OptionsPanel(ctk.CTkFrame):
                               sublabel="JSON conforme a uno schema")
         ext_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(4, 4))
 
+        email_att_row = _toggle_row(
+            ops,
+            "Allegati email separati",
+            self.email_attachments_separate_var,
+            on_change=self._fire_change,
+            sublabel="Un Markdown per la mail e uno per ogni allegato",
+        )
+        email_att_row.grid(row=3, column=0, sticky="ew", padx=14, pady=(4, 4))
+
         # Schema picker (only relevant when extraction is on)
         schema_wrap = ctk.CTkFrame(ops, fg_color="transparent")
-        schema_wrap.grid(row=3, column=0, sticky="ew", padx=14, pady=(0, 8))
+        schema_wrap.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 8))
         ctk.CTkLabel(
             schema_wrap, text="Schema",
             font=theme.font(10), text_color=theme.INK_3,
@@ -180,11 +191,11 @@ class OptionsPanel(ctk.CTkFrame):
         rename_row = _toggle_row(ops, "Rinomina file", self.rename_files_var,
                                  on_change=self._on_rename_changed,
                                  sublabel="Suggerimenti di nome dall'AI")
-        rename_row.grid(row=4, column=0, sticky="ew", padx=14, pady=(4, 4))
+        rename_row.grid(row=5, column=0, sticky="ew", padx=14, pady=(4, 4))
 
         # Rename mode + batch context
         self.rename_extra = ctk.CTkFrame(ops, fg_color="transparent")
-        self.rename_extra.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 6))
+        self.rename_extra.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 6))
 
         mode_wrap = ctk.CTkFrame(self.rename_extra, fg_color="transparent")
         mode_wrap.pack(fill="x")
@@ -327,6 +338,7 @@ class OptionsPanel(ctk.CTkFrame):
         return {
             "run_ocr": self.run_ocr_var.get(),
             "run_extraction": self.run_extraction_var.get(),
+            "email_attachments_separate": self.email_attachments_separate_var.get(),
             "rename_files": self.rename_files_var.get(),
             "rename_use_batch_context": self.rename_batch_context_var.get(),
             "model": self.model_var.get(),
@@ -351,6 +363,8 @@ class OptionsPanel(ctk.CTkFrame):
         self.config = config
         self.run_ocr_var.set(config.run_ocr)
         self.run_extraction_var.set(config.run_extraction)
+        self.email_attachments_separate_var.set(
+            bool(getattr(config, "email_attachments_separate", False)))
         self.rename_files_var.set(config.rename_files)
         self.rename_batch_context_var.set(
             bool(getattr(config, "rename_use_batch_context", False)))

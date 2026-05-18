@@ -26,6 +26,7 @@ class AppConfig:
     page_dpi: int = 200
     jpeg_quality: int = 85
     include_ocr_text_in_output: bool = True
+    email_attachments_separate: bool = False
     run_ocr: bool = True
     run_extraction: bool = False
     rename_files: bool = False

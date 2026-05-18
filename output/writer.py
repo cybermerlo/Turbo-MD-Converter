@@ -20,11 +20,12 @@ class OutputWriter:
         pdf_path: Path,
         markdown: str | None = None,
         json_data: dict | None = None,
+        output_stem: str | None = None,
     ) -> list[Path]:
         written: list[Path] = []
         target = self._target_dir(pdf_path)
         target.mkdir(parents=True, exist_ok=True)
-        stem = pdf_path.stem
+        stem = output_stem or pdf_path.stem
 
         if markdown is not None:
             md_path = target / f"{stem}.md"

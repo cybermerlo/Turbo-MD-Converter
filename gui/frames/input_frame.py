@@ -1,6 +1,7 @@
 """File selection sidebar — dropzone + file rows with status pill, size, pages."""
 
 from __future__ import annotations
+import ctypes
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,8 @@ SUPPORTED_EXTENSIONS = (
     ".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4",
     ".p7m", ".zip", ".7z", ".tar", ".tgz",
 )
+
+CF_HDROP = 15
 
 
 def _format_size(num_bytes: int) -> str:
@@ -40,6 +43,85 @@ def _count_pdf_pages(path: Path) -> int | None:
             return doc.page_count
     except Exception:
         return None
+
+
+def _normalise_candidate_path(raw: str) -> Path | None:
+    text = raw.strip().strip('"')
+    if not text:
+        return None
+    if text.startswith("file://"):
+        try:
+            import urllib.parse
+            import urllib.request
+            text = urllib.request.url2pathname(urllib.parse.urlparse(text).path)
+        except Exception:
+            return None
+    return Path(text)
+
+
+def _clipboard_file_paths_win32() -> list[Path]:
+    """Read files copied in Windows Explorer from the clipboard."""
+    if sys.platform != "win32":
+        return []
+
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    shell32 = ctypes.windll.shell32
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    user32.CloseClipboard.argtypes = []
+    user32.CloseClipboard.restype = wintypes.BOOL
+    shell32.DragQueryFileW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.UINT,
+        wintypes.LPWSTR,
+        wintypes.UINT,
+    ]
+    shell32.DragQueryFileW.restype = wintypes.UINT
+
+    if not user32.IsClipboardFormatAvailable(CF_HDROP):
+        return []
+
+    if not user32.OpenClipboard(None):
+        return []
+    try:
+        hdrop = user32.GetClipboardData(CF_HDROP)
+        if not hdrop:
+            return []
+
+        count = shell32.DragQueryFileW(hdrop, 0xFFFFFFFF, None, 0)
+        paths = []
+        for i in range(count):
+            length = shell32.DragQueryFileW(hdrop, i, None, 0)
+            if length <= 0:
+                continue
+            buf = ctypes.create_unicode_buffer(length + 1)
+            shell32.DragQueryFileW(hdrop, i, buf, length + 1)
+            paths.append(Path(buf.value))
+        return paths
+    finally:
+        user32.CloseClipboard()
+
+
+def _paths_from_clipboard_text(text: str) -> list[Path]:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    paths: list[Path] = []
+    for line in lines:
+        path = _normalise_candidate_path(line)
+        if path is None or not path.exists():
+            return []
+        if path.is_file() and path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return []
+        paths.append(path)
+    return paths
 
 
 class _FileRow(ctk.CTkFrame):
@@ -203,13 +285,13 @@ class InputFrame(ctk.CTkFrame):
         self.dropzone.pack_propagate(False)
 
         self.dropzone_title = ctk.CTkLabel(
-            self.dropzone, text="Trascina i file qui",
+            self.dropzone, text="Trascina o incolla i file qui",
             font=theme.font(12, "bold"), text_color=theme.INK,
         )
         self.dropzone_title.pack(pady=(12, 0))
         ctk.CTkLabel(
             self.dropzone,
-            text="PDF · immagini · DOCX · audio · email · archivi",
+            text="PDF · immagini · DOCX · audio · email · archivi · Ctrl+V",
             font=theme.font(10), text_color=theme.INK_3,
         ).pack(pady=(2, 12))
 
@@ -228,7 +310,7 @@ class InputFrame(ctk.CTkFrame):
         self.add_folder_btn.pack(side="left", padx=(0, 5), fill="x", expand=True)
 
         self.paste_text_btn = theme.ghost_button(
-            btn_row, "Appunti", command=self._paste_text, height=30,
+            btn_row, "Appunti", command=self.paste_from_clipboard, height=30,
         )
         self.paste_text_btn.pack(side="left", fill="x", expand=True)
 
@@ -322,7 +404,7 @@ class InputFrame(ctk.CTkFrame):
         if not self._file_paths:
             self._empty_lbl = ctk.CTkLabel(
                 self.file_list,
-                text="Nessun documento.\nTrascina qui i file o usa i pulsanti.",
+                text="Nessun documento.\nTrascina qui i file, incolla con Ctrl+V o usa i pulsanti.",
                 font=theme.font(11), text_color=theme.INK_4, justify="center",
             )
             self._empty_lbl.pack(pady=40)
@@ -349,11 +431,31 @@ class InputFrame(ctk.CTkFrame):
         if self.on_files_changed:
             self.on_files_changed(self._file_paths)
 
-    def _paste_text(self):
+    def paste_from_clipboard(self) -> bool:
+        paths = _clipboard_file_paths_win32()
+        text = ""
+        if not paths:
+            try:
+                text = self.master.clipboard_get()
+                paths = _paths_from_clipboard_text(text)
+            except Exception:
+                text = ""
+
+        if paths:
+            before = len(self._file_paths)
+            self.add_paths(paths)
+            if len(self._file_paths) > before:
+                self.select_path(self._file_paths[-1])
+            return True
+
+        return self._paste_text(text)
+
+    def _paste_text(self, text: str | None = None) -> bool:
         try:
-            text = self.master.clipboard_get()
+            if text is None:
+                text = self.master.clipboard_get()
             if not text or not text.strip():
-                return
+                return False
             ts = time.strftime("%Y%m%d_%H%M%S")
             tdir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
             tdir.mkdir(exist_ok=True, parents=True)
@@ -364,8 +466,9 @@ class InputFrame(ctk.CTkFrame):
                 self._clipboard_paths.add(tfile)
             self._refresh_list()
             self.select_path(tfile)
+            return True
         except Exception:
-            pass
+            return False
 
     # ─── Public API (kept compatible) ─────────────────────────────────────
     def get_file_paths(self) -> list[Path]:

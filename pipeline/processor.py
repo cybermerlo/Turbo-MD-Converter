@@ -8,6 +8,7 @@ import re
 import tempfile
 import threading
 from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -52,6 +53,14 @@ _DIRECT_READ_FORMATS = frozenset((
     ".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf",
     ".p7m", ".zip", ".7z", ".tar", ".tgz",
 ))
+
+
+@dataclass
+class _EmailAttachmentDocument:
+    index: int
+    filename: str
+    text: str
+    extractions: list[dict] = field(default_factory=list)
 
 
 class DocumentProcessor:
@@ -110,6 +119,7 @@ class DocumentProcessor:
             Tuple of (success: bool, cost_info: dict)
         """
         self.cost_tracker.reset()
+        self._pending_email_attachment_docs: list[_EmailAttachmentDocument] = []
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
         # Phase 1: Text acquisition (OCR for PDF/image, direct read for TXT/EML/MSG,
@@ -307,45 +317,29 @@ class DocumentProcessor:
             return False, cost_info
 
         # Phase 2: Extraction (skip if schema is "none" OR extraction is disabled)
-        if not self.config.run_extraction or self.extractor is None:
-            reason = "LangExtract disabilitato" if not self.config.run_extraction else "schema: none"
-            self.emit(LogEvent(
-                message=f"Estrazione strutturata saltata ({reason})"
-            ))
-            extractions = []
-        else:
-            text_len = len(ocr_result.combined_text)
-            est_chunks = math.ceil(text_len / self.config.max_char_buffer) if self.config.max_char_buffer > 0 else 1
-            self.emit(ExtractionStartEvent(
-                total_text_length=text_len,
-                schema_name=self.config.active_schema,
-            ))
-            self.emit(LogEvent(
-                message=(
-                    f"Avvio estrazione strutturata  [{self.config.extraction_model_id}]  "
-                    f"schema={self.config.active_schema}  "
-                    f"{text_len:,} car.  ~{est_chunks} chunk  "
-                    f"pass={self.config.extraction_passes}  workers={self.config.max_workers}"
+        email_attachment_docs = list(self._pending_email_attachment_docs)
+        try:
+            extractions = self._extract_entities_for_text(
+                ocr_result.combined_text,
+                source_label=pdf_path.name,
+            )
+            for attachment_doc in email_attachment_docs:
+                if cancel_event.is_set():
+                    return False, self.cost_tracker.get_totals()
+                attachment_doc.extractions = self._extract_entities_for_text(
+                    attachment_doc.text,
+                    source_label=f"allegato {attachment_doc.filename}",
                 )
+        except Exception as e:
+            self.emit(ErrorEvent(
+                error_message=f"Errore estrazione: {e}",
+                recoverable=False,
             ))
-
-            try:
-                extraction_result = self.extractor.extract(ocr_result.combined_text)
-                result_dict = LegalExtractor.result_to_dict(extraction_result)
-                extractions = result_dict["extractions"]
-            except Exception as e:
-                self.emit(ErrorEvent(
-                    error_message=f"Errore estrazione: {e}",
-                    recoverable=False,
-                ))
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=self.cost_tracker.get_totals(),
-                ))
-                return False, self.cost_tracker.get_totals()
-
-            self.emit(ExtractionCompleteEvent(extraction_count=len(extractions)))
-            self.emit(LogEvent(message=f"Estratte {len(extractions)} entita'"))
+            self.emit(PipelineCompleteEvent(
+                pdf_path=pdf_path, success=False,
+                cost_info=self.cost_tracker.get_totals(),
+            ))
+            return False, self.cost_tracker.get_totals()
 
         if cancel_event.is_set():
             return False, self.cost_tracker.get_totals()
@@ -353,6 +347,8 @@ class DocumentProcessor:
         # Phase 3: Format and write output
         cost_info = self.cost_tracker.get_totals()
         output_files = []
+        primary_output_files = []
+        attachment_output_files = []
 
         markdown = None
         json_data = None
@@ -381,11 +377,34 @@ class DocumentProcessor:
             writer = self.writer
 
         try:
-            output_files = writer.write(
+            primary_output_files = writer.write(
                 pdf_path=pdf_path,
                 markdown=markdown,
                 json_data=json_data,
             )
+            output_files = list(primary_output_files)
+            if "markdown" in self.config.output_formats:
+                for attachment_doc in email_attachment_docs:
+                    attachment_markdown = self.md_formatter.format(
+                        extractions=attachment_doc.extractions,
+                        source_filename=attachment_doc.filename,
+                        total_pages=1,
+                        ocr_text=(
+                            attachment_doc.text
+                            if self.config.include_ocr_text_in_output
+                            else None
+                        ),
+                        cost_info=None,
+                    )
+                    attachment_output_files.extend(writer.write(
+                        pdf_path=pdf_path,
+                        markdown=attachment_markdown,
+                        output_stem=self._attachment_output_stem(
+                            pdf_path.stem,
+                            attachment_doc,
+                        ),
+                    ))
+                output_files.extend(attachment_output_files)
         except Exception as e:
             self.emit(ErrorEvent(
                 error_message=f"Errore scrittura output: {e}",
@@ -403,12 +422,15 @@ class DocumentProcessor:
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
         if self.config.rename_files:
+            rename_output_files = (
+                primary_output_files if email_attachment_docs else output_files
+            )
             if defer_rename:
                 if deferred_renames is not None:
                     deferred_renames.append({
                         "doc_id": len(deferred_renames) + 1,
                         "pdf_path": pdf_path,
-                        "output_files": list(output_files),
+                        "output_files": list(rename_output_files),
                         "ocr_text": ocr_result.combined_text,
                         "original_name": pdf_path.name,
                     })
@@ -431,8 +453,16 @@ class DocumentProcessor:
                         else ""
                     ),
                 )
-                renamed_pdf_path, renamed_output_files = self._rename_files(
-                    pdf_path, output_files, _rename_result, rename_history=rename_history,
+                renamed_pdf_path, renamed_primary_outputs = self._rename_files(
+                    pdf_path,
+                    rename_output_files,
+                    _rename_result,
+                    rename_history=rename_history,
+                )
+                renamed_output_files = (
+                    renamed_primary_outputs + attachment_output_files
+                    if email_attachment_docs
+                    else renamed_primary_outputs
                 )
 
         self.emit(PipelineCompleteEvent(
@@ -445,6 +475,53 @@ class DocumentProcessor:
             message=f"Completato: {pdf_path.name} -> {len(output_files)} file"
         ))
         return True, cost_info
+
+    def _extract_entities_for_text(
+        self,
+        text: str,
+        source_label: str = "documento",
+    ) -> list[dict]:
+        """Run structured extraction for one text block when enabled."""
+        if not self.config.run_extraction or self.extractor is None:
+            reason = (
+                "LangExtract disabilitato"
+                if not self.config.run_extraction
+                else "schema: none"
+            )
+            self.emit(LogEvent(
+                message=f"Estrazione strutturata saltata per {source_label} ({reason})"
+            ))
+            return []
+
+        text_len = len(text)
+        est_chunks = (
+            math.ceil(text_len / self.config.max_char_buffer)
+            if self.config.max_char_buffer > 0
+            else 1
+        )
+        self.emit(ExtractionStartEvent(
+            total_text_length=text_len,
+            schema_name=self.config.active_schema,
+        ))
+        self.emit(LogEvent(
+            message=(
+                f"Avvio estrazione strutturata per {source_label}  "
+                f"[{self.config.extraction_model_id}]  "
+                f"schema={self.config.active_schema}  "
+                f"{text_len:,} car.  ~{est_chunks} chunk  "
+                f"pass={self.config.extraction_passes}  workers={self.config.max_workers}"
+            )
+        ))
+
+        extraction_result = self.extractor.extract(text)
+        result_dict = LegalExtractor.result_to_dict(extraction_result)
+        extractions = result_dict["extractions"]
+
+        self.emit(ExtractionCompleteEvent(extraction_count=len(extractions)))
+        self.emit(LogEvent(
+            message=f"Estratte {len(extractions)} entita' da {source_label}"
+        ))
+        return extractions
 
     def process_batch(
         self,
@@ -542,6 +619,25 @@ class DocumentProcessor:
             successful=successful,
             failed=failed,
         ))
+
+    @staticmethod
+    def _safe_output_stem_component(value: str, fallback: str) -> str:
+        text = Path(str(value)).stem or fallback
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", text)
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        return text[:90] or fallback
+
+    def _attachment_output_stem(
+        self,
+        email_stem: str,
+        attachment_doc: _EmailAttachmentDocument,
+    ) -> str:
+        base = self._safe_output_stem_component(email_stem, "email")
+        attachment = self._safe_output_stem_component(
+            attachment_doc.filename,
+            f"allegato {attachment_doc.index}",
+        )
+        return f"{base} - Allegato {attachment_doc.index} - {attachment}"
 
     def _rename_files(
         self,
@@ -798,10 +894,22 @@ class DocumentProcessor:
         name_lower = file_path.name.lower()
 
         if suffix == ".eml":
-            text = self._extract_eml_text(file_path, cancel_event)
+            if getattr(self.config, "email_attachments_separate", False):
+                text, self._pending_email_attachment_docs = self._extract_eml_parts(
+                    file_path,
+                    cancel_event,
+                )
+            else:
+                text = self._extract_eml_text(file_path, cancel_event)
             self.emit(LogEvent(message="File EML letto direttamente"))
         elif suffix == ".msg":
-            text = self._extract_msg_text(file_path, cancel_event)
+            if getattr(self.config, "email_attachments_separate", False):
+                text, self._pending_email_attachment_docs = self._extract_msg_parts(
+                    file_path,
+                    cancel_event,
+                )
+            else:
+                text = self._extract_msg_text(file_path, cancel_event)
             self.emit(LogEvent(message="File MSG letto direttamente"))
         elif suffix == ".docx":
             text = self._extract_docx_text(file_path)
@@ -837,6 +945,13 @@ class DocumentProcessor:
         self, file_path: Path, cancel_event: threading.Event | None = None
     ) -> str:
         """Extract text from an EML file, including headers, body and OCR of attachments."""
+        body_text, attachments = self._extract_eml_parts(file_path, cancel_event)
+        return self._join_email_and_attachments(body_text, attachments)
+
+    def _extract_eml_parts(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> tuple[str, list[_EmailAttachmentDocument]]:
+        """Extract an EML body and convert attachments as separate text blocks."""
         msg = email.message_from_bytes(
             file_path.read_bytes(),
             policy=email.policy.default,
@@ -879,26 +994,39 @@ class DocumentProcessor:
             self.emit(LogEvent(
                 message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
             ))
+        attachment_docs: list[_EmailAttachmentDocument] = []
+        if att_list:
             with tempfile.TemporaryDirectory() as tmpdir:
                 for i, (name, data) in enumerate(att_list, 1):
                     if cancel_event and cancel_event.is_set():
                         break
-                    att_path = Path(tmpdir) / name
+                    safe_name = Path(name).name or f"allegato_{i}"
+                    att_path = Path(tmpdir) / safe_name
                     att_path.write_bytes(data)
                     self.emit(LogEvent(
                         message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
                     ))
                     att_text = self._process_attachment(att_path, cancel_event)
                     if att_text:
-                        parts.append(f"\n\n--- ALLEGATO {i}: {name} ---\n\n")
-                        parts.append(att_text)
+                        attachment_docs.append(_EmailAttachmentDocument(
+                            index=i,
+                            filename=name,
+                            text=att_text,
+                        ))
 
-        return "\n".join(parts)
+        return "\n".join(parts), attachment_docs
 
     def _extract_msg_text(
         self, file_path: Path, cancel_event: threading.Event | None = None
     ) -> str:
         """Extract text from an Outlook MSG file, including headers, body and OCR of attachments."""
+        body_text, attachments = self._extract_msg_parts(file_path, cancel_event)
+        return self._join_email_and_attachments(body_text, attachments)
+
+    def _extract_msg_parts(
+        self, file_path: Path, cancel_event: threading.Event | None = None
+    ) -> tuple[str, list[_EmailAttachmentDocument]]:
+        """Extract a MSG body and convert attachments as separate text blocks."""
         import extract_msg
 
         parts = []
@@ -937,20 +1065,39 @@ class DocumentProcessor:
             self.emit(LogEvent(
                 message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
             ))
+        attachment_docs: list[_EmailAttachmentDocument] = []
+        if att_list:
             with tempfile.TemporaryDirectory() as tmpdir:
                 for i, (name, data) in enumerate(att_list, 1):
                     if cancel_event and cancel_event.is_set():
                         break
-                    att_path = Path(tmpdir) / name
+                    safe_name = Path(name).name or f"allegato_{i}"
+                    att_path = Path(tmpdir) / safe_name
                     att_path.write_bytes(data)
                     self.emit(LogEvent(
                         message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
                     ))
                     att_text = self._process_attachment(att_path, cancel_event)
                     if att_text:
-                        parts.append(f"\n\n--- ALLEGATO {i}: {name} ---\n\n")
-                        parts.append(att_text)
+                        attachment_docs.append(_EmailAttachmentDocument(
+                            index=i,
+                            filename=name,
+                            text=att_text,
+                        ))
 
+        return "\n".join(parts), attachment_docs
+
+    @staticmethod
+    def _join_email_and_attachments(
+        body_text: str,
+        attachments: list[_EmailAttachmentDocument],
+    ) -> str:
+        parts = [body_text] if body_text else []
+        for attachment in attachments:
+            parts.append(
+                f"\n\n--- ALLEGATO {attachment.index}: {attachment.filename} ---\n\n"
+            )
+            parts.append(attachment.text)
         return "\n".join(parts)
 
     def _extract_p7m_text(

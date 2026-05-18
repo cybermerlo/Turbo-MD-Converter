@@ -25,8 +25,15 @@ class _PillToggle(ctk.CTkFrame):
                                      bg=theme.PAPER, highlightthickness=0, bd=0)
         self._canvas.pack()
         self._canvas.bind("<Button-1>", self._toggle)
-        self._var.trace_add("write", lambda *_: self._draw_toggle())
+        self._trace_id = self._var.trace_add("write", lambda *_: self._draw_toggle())
         self._draw_toggle()
+
+    def destroy(self):
+        try:
+            self._var.trace_remove("write", self._trace_id)
+        except Exception:
+            pass
+        super().destroy()
 
     def _toggle(self, _e=None):
         if str(self.cget("cursor")) == "watch":

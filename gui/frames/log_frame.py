@@ -13,6 +13,7 @@ class LogFrame(ctk.CTkFrame):
 
     HEAD_HEIGHT = 36
     OPEN_HEIGHT = 200
+    MAX_LINES = 2000
 
     def __init__(self, master, **kwargs):
         super().__init__(master, fg_color=theme.PAPER, corner_radius=0, **kwargs)
@@ -135,6 +136,9 @@ class LogFrame(ctk.CTkFrame):
             self.textbox.insert("end", "INFO    ", ("level", "info"))
         tag = "error" if level == "ERROR" else "warning" if level == "WARNING" else "info"
         self.textbox.insert("end", message + "\n", tag)
+        line_count = int(self.textbox.index("end-1c").split(".")[0])
+        if line_count > self.MAX_LINES:
+            self.textbox.delete("1.0", f"{line_count - self.MAX_LINES}.0")
         self.textbox.see("end")
         self.textbox.configure(state="disabled")
         self._refresh_badge()

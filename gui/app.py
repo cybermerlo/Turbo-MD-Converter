@@ -194,21 +194,26 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.toast_stack = ToastStack(self)
         # Position above the log drawer
         self._reposition_toast_stack()
-        self.bind("<Configure>", lambda _e: self._reposition_toast_stack())
+        self._toast_reposition_pending = False
+        self.bind("<Configure>", lambda _e: self._schedule_toast_reposition())
+
+    def _schedule_toast_reposition(self):
+        if self._toast_reposition_pending:
+            return
+        self._toast_reposition_pending = True
+        self.after_idle(self._reposition_toast_stack)
 
     def _reposition_toast_stack(self):
+        self._toast_reposition_pending = False
         if not hasattr(self, "toast_stack"):
             return
-        # Anchor to bottom-right of the canvas (col 1) area, above the log drawer
         try:
-            self.update_idletasks()
-            w = 360
             self.toast_stack.place(
                 in_=self,
                 relx=1.0, rely=1.0,
                 anchor="se",
                 x=-360, y=-72,
-                width=w,
+                width=360,
             )
         except Exception:
             pass
@@ -304,13 +309,16 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     # ─── Event queue ─────────────────────────────────────────────────────────
     def _start_queue_polling(self) -> None:
-        try:
-            while True:
+        has_events = False
+        while not self.gui_queue.empty():
+            try:
                 event = self.gui_queue.get_nowait()
                 self._handle_event(event)
-        except queue.Empty:
-            pass
-        self.after(100, self._start_queue_polling)
+                has_events = True
+            except queue.Empty:
+                break
+        delay = 100 if has_events else 500
+        self.after(delay, self._start_queue_polling)
 
     def _handle_event(self, event: PipelineEvent) -> None:
         if isinstance(event, OCRProgressEvent):

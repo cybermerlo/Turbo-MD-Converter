@@ -18,9 +18,26 @@ Regole:
 - Trascrivi numeri, date, codici e riferimenti normativi esattamente come appaiono
 - Preserva maiuscole/minuscole, accenti e punteggiatura
 - Se una parola e' illeggibile, indica [illeggibile]
-- Se è presente una immagine significativa nella pagina descrivila brevemente.
 - Non aggiungere interpretazioni o commenti
 - Restituisci SOLO il testo trascritto"""
+
+IMAGE_HANDLING_INSTRUCTION = """
+
+---
+ISTRUZIONE AGGIUNTIVA — GESTIONE ELEMENTI VISIVI (questa regola PREVALE su qualsiasi istruzione precedente che ti dica di restituire solo testo o di non aggiungere commenti):
+
+Se nella pagina sono presenti elementi visivi non testuali (foto, immagini, illustrazioni, grafici, diagrammi, loghi, firme autografe, timbri, sigilli, codici a barre, QR code, schemi, mappe, ecc.), inseriscili nel flusso del testo — nella posizione esatta in cui appaiono nella pagina — usando ESATTAMENTE questo formato su una propria riga:
+
+[IMMAGINE: breve descrizione oggettiva dell'elemento, 1-2 frasi]
+
+Esempi:
+- [IMMAGINE: foto di un gattino bianco e arancione che guarda verso la camera]
+- [IMMAGINE: logo aziendale "ACME S.r.l." in alto a sinistra della pagina]
+- [IMMAGINE: firma autografa illeggibile in calce]
+- [IMMAGINE: timbro tondo con scritta "COMUNE DI MILANO - PROTOCOLLO"]
+- [IMMAGINE: grafico a barre che mostra fatturato trimestrale crescente]
+
+Descrivi in modo oggettivo, senza interpretare o commentare il significato dell'immagine. Non aggiungere il marker per elementi puramente decorativi (righe orizzontali, separatori, sfondi)."""
 
 DEFAULT_RENAME_PROMPT = """\
 Sei un assistente per l'archiviazione documenti di uno studio legale.

@@ -5,7 +5,7 @@ import logging
 from google import genai
 from google.genai import types
 
-from config.defaults import DEFAULT_OCR_PROMPT
+from config.defaults import DEFAULT_OCR_PROMPT, IMAGE_HANDLING_INSTRUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +55,12 @@ class GeminiOCR:
             ]
             config = types.GenerateContentConfig(safety_settings=safety_settings)
 
+            full_prompt = self.ocr_prompt + IMAGE_HANDLING_INSTRUCTION
+
             stream_response = self.client.models.generate_content_stream(
                 model=self.model_id,
                 contents=[
-                    types.Part.from_text(text=self.ocr_prompt),
+                    types.Part.from_text(text=full_prompt),
                     types.Part.from_bytes(data=image_bytes, mime_type=mime_type),
                 ],
                 config=config,

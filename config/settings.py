@@ -15,8 +15,8 @@ class AppConfig:
     gemini_api_key: str = ""
     langextract_api_key: str = ""
     output_directory: str = ""
-    ocr_model_id: str = "gemini-3.1-flash-lite-preview"
-    extraction_model_id: str = "gemini-3.1-flash-lite-preview"
+    ocr_model_id: str = "gemini-3.1-flash-lite"
+    extraction_model_id: str = "gemini-3.1-flash-lite"
     ocr_prompt: str = ""
     active_schema: str = "full_legal"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])

@@ -77,7 +77,7 @@ AVAILABLE_AUDIO_MODELS = [
 # Available OCR models
 AVAILABLE_OCR_MODELS = [
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite-preview",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
 ]
 
@@ -90,7 +90,7 @@ PRICING = {
         "input_per_1m": 0.50,
         "output_per_1m": 3.00,
     },
-    "gemini-3.1-flash-lite-preview": {
+    "gemini-3.1-flash-lite": {
         "input_per_1m": 0.25,
         "output_per_1m": 1.50,
     },

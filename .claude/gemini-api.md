@@ -305,7 +305,7 @@ interaction = client.interactions.create(
 |---|---|---|
 | `gemini-3-flash-preview` | Veloce, smart, vision+audio | Free + Paid |
 | `gemini-3.1-pro-preview` | Qualità massima | Solo Paid |
-| `gemini-3.1-flash-lite-preview` | Più economico, task agentici | Free + Paid |
+| `gemini-3.1-flash-lite` | Più economico, task agentici | Free + Paid |
 | `gemini-2.5-pro` | Coding/reasoning, 1M ctx | Free + Paid |
 | `gemini-2.5-flash` | Ragionamento ibrido, 1M ctx | Free + Paid |
 | `gemini-2.5-flash-lite` | Più piccolo/economico | Free + Paid |
@@ -345,7 +345,7 @@ interaction = client.interactions.create(
 | Modello | Input | Output |
 |---|---|---|
 | gemini-3-flash-preview | $0.50 (testo/img/video) | $3.00 |
-| gemini-3.1-flash-lite-preview | $0.25 | $1.50 |
+| gemini-3.1-flash-lite | $0.25 | $1.50 |
 | gemini-3.1-pro-preview | $2.00 (≤200K) / $4.00 (>200K) | $12.00 / $18.00 |
 | gemini-2.5-pro | $1.25 (≤200K) / $2.50 (>200K) | $10.00 / $15.00 |
 | gemini-2.5-flash | $0.30 (testo/img/video) | $2.50 |

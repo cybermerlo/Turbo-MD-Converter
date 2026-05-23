@@ -5,7 +5,13 @@ from tkinter import filedialog
 
 import customtkinter as ctk
 
-from config.defaults import DEFAULT_OCR_PROMPT, DEFAULT_RENAME_PROMPT, SCHEMA_PRESET_NAMES, AVAILABLE_OCR_MODELS
+from config.defaults import (
+    AVAILABLE_OCR_MODELS,
+    DEFAULT_OCR_PROMPT,
+    DEFAULT_RENAME_PROMPT,
+    SCHEMA_PRESET_NAMES,
+    normalize_ocr_model,
+)
 from config.settings import AppConfig
 from extraction.schemas import get_schema_preset, get_available_schemas
 
@@ -175,11 +181,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(model_row, text="Modello:").pack(side="left", padx=(0, 10))
         self.ocr_model_menu = ctk.CTkOptionMenu(model_row, values=AVAILABLE_OCR_MODELS, width=260)
-        current_model = (
-            self.config.ocr_model_id
-            if self.config.ocr_model_id in AVAILABLE_OCR_MODELS
-            else AVAILABLE_OCR_MODELS[0]
-        )
+        current_model = normalize_ocr_model(self.config.ocr_model_id)
         self.ocr_model_menu.set(current_model)
         self.ocr_model_menu.pack(side="left")
 

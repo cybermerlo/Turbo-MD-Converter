@@ -8,7 +8,7 @@ import customtkinter as ctk
 
 from gui import theme
 from gui.frames.progress_frame import CostChart
-from config.defaults import AVAILABLE_OCR_MODELS, SCHEMA_PRESET_NAMES
+from config.defaults import AVAILABLE_OCR_MODELS, SCHEMA_PRESET_NAMES, normalize_ocr_model
 
 _RENAME_MODE_LABELS = {"md": "Solo MD", "pdf": "Solo PDF", "both": "Entrambi"}
 _RENAME_LABEL_TO_MODE = {v: k for k, v in _RENAME_MODE_LABELS.items()}
@@ -140,8 +140,7 @@ class OptionsPanel(ctk.CTkFrame):
         self.rename_batch_context_var = ctk.BooleanVar(
             value=bool(getattr(config, "rename_use_batch_context", False)))
         self.model_var = ctk.StringVar(
-            value=config.ocr_model_id if config.ocr_model_id in AVAILABLE_OCR_MODELS
-            else AVAILABLE_OCR_MODELS[0])
+            value=normalize_ocr_model(config.ocr_model_id))
         self.schema_var = ctk.StringVar(value=config.active_schema)
         self.rename_mode_var = ctk.StringVar(
             value=_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
@@ -375,7 +374,7 @@ class OptionsPanel(ctk.CTkFrame):
         self.rename_files_var.set(config.rename_files)
         self.rename_batch_context_var.set(
             bool(getattr(config, "rename_use_batch_context", False)))
-        self.model_var.set(config.ocr_model_id)
+        self.model_var.set(normalize_ocr_model(config.ocr_model_id))
         self.schema_var.set(config.active_schema)
         self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
         self.output_mode_var.set(config.output_mode)

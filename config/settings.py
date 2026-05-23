@@ -7,6 +7,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from config.defaults import DEFAULT_OCR_MODEL
+
 
 @dataclass
 class AppConfig:
@@ -86,7 +88,7 @@ def load_env_keys(project_dir: Path | None = None) -> tuple[str, str, str]:
 def load_config(config_path: Path | None = None,
                 project_dir: Path | None = None) -> AppConfig:
     """Load config from JSON file, then override API keys from .env."""
-    from config.defaults import DEFAULT_OCR_MODEL, DEFAULT_OCR_PROMPT, normalize_ocr_model
+    from config.defaults import DEFAULT_OCR_PROMPT, normalize_ocr_model
 
     path = config_path or get_config_path()
     config = AppConfig()
@@ -104,6 +106,9 @@ def load_config(config_path: Path | None = None,
     # Set default OCR prompt if empty
     if not config.ocr_prompt:
         config.ocr_prompt = DEFAULT_OCR_PROMPT
+
+    config.ocr_model_id = normalize_ocr_model(config.ocr_model_id)
+    config.extraction_model_id = normalize_ocr_model(config.extraction_model_id)
 
     # Override API keys from environment
     gemini_key, langextract_key, mistral_key = load_env_keys(project_dir)

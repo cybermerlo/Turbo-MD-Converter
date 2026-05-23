@@ -74,12 +74,21 @@ AVAILABLE_AUDIO_MODELS = [
     "voxtral-small-latest",
 ]
 
-# Available OCR models
+# Available OCR models (default first)
+DEFAULT_OCR_MODEL = "gemini-3.1-flash-lite"
+
 AVAILABLE_OCR_MODELS = [
+    DEFAULT_OCR_MODEL,
     "gemini-3-flash-preview",
-    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
 ]
+
+
+def normalize_ocr_model(model_id: str) -> str:
+    """Return a supported OCR model id, falling back to the default."""
+    if model_id in AVAILABLE_OCR_MODELS:
+        return model_id
+    return DEFAULT_OCR_MODEL
 
 # Page separator used when combining OCR results
 PAGE_SEPARATOR = "\n\n--- Pagina {page_num} ---\n\n"

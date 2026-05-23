@@ -83,6 +83,16 @@ class CostTracker:
         """Clear all recorded calls."""
         self._calls.clear()
 
+    def merge_from(self, other: "CostTracker") -> None:
+        """Append all call records from another tracker."""
+        for call in other._calls:
+            self.add_call(
+                model_id=call.model_id,
+                input_tokens=call.input_tokens,
+                output_tokens=call.output_tokens,
+                phase=call.phase,
+            )
+
     def _compute_cost(self, calls: list[CallRecord]) -> float:
         return sum(self._cost_for_call(c) for c in calls)
 

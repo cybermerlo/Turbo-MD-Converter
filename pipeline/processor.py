@@ -1,31 +1,30 @@
-"""Full pipeline orchestrator: PDF/TXT/EML -> OCR (PDF only) -> Extract -> Output."""
+"""Full pipeline orchestrator: document -> OCR/read -> extract -> output."""
 
-import email
-import email.policy
 import logging
 import math
-import re
-import tempfile
 import threading
-from collections import Counter
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
 from config.settings import AppConfig
 from extraction.extractor import LegalExtractor
 from extraction.schemas import get_schema_preset
-from ocr.ocr_pipeline import OCRPipeline
-from output.json_formatter import JSONFormatter
+from ocr.audio_transcriber import AudioTranscriber, AudioTranscriberError
+from ocr.ocr_pipeline import OCRPipeline, OCRResult
 from output.markdown_formatter import MarkdownFormatter
 from output.writer import OutputWriter
+from pipeline.attachment_processor import AttachmentProcessor
+from pipeline.constants import (
+    AUDIO_EXTENSIONS,
+    DIRECT_READ_FORMATS,
+    IMAGE_EXTENSIONS,
+)
 from pipeline.events import (
     BatchCompleteEvent,
     ErrorEvent,
     ExtractionCompleteEvent,
     ExtractionProgressEvent,
     ExtractionStartEvent,
-    FileRenamedEvent,
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
@@ -34,37 +33,15 @@ from pipeline.events import (
     PipelineCompleteEvent,
     PipelineEvent,
 )
+from pipeline.models import EmailAttachmentDocument
+from pipeline.rename_coordinator import RenameCoordinator, attachment_output_stem
 from utils.cost_tracker import CostTracker
-from utils.file_renamer import (
-    build_new_filepath,
-    derive_batch_profiles_from_llm,
-    derive_filename_from_llm,
-    rename_file,
-)
 
 logger = logging.getLogger(__name__)
 
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif")
-AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4")
-ARCHIVE_EXTENSIONS = (".zip", ".7z", ".tar", ".tgz")
-
-# All formats that are read directly without OCR (includes archives and P7M)
-_DIRECT_READ_FORMATS = frozenset((
-    ".txt", ".eml", ".msg", ".md", ".docx", ".html", ".htm", ".rtf",
-    ".p7m", ".zip", ".7z", ".tar", ".tgz",
-))
-
-
-@dataclass
-class _EmailAttachmentDocument:
-    index: int
-    filename: str
-    text: str
-    extractions: list[dict] = field(default_factory=list)
-
 
 class DocumentProcessor:
-    """Runs the full pipeline: PDF -> OCR -> Extract -> Output."""
+    """Runs the full pipeline: acquire text -> extract -> write -> rename."""
 
     def __init__(
         self,
@@ -74,17 +51,14 @@ class DocumentProcessor:
         self.config = config
         self.emit = event_callback
         self.cost_tracker = CostTracker()
-
         self.ocr_pipeline = OCRPipeline(config, self.cost_tracker)
 
-        from ocr.audio_transcriber import AudioTranscriber
         self.audio_transcriber = (
             AudioTranscriber(config.mistral_api_key)
             if config.mistral_api_key else None
         )
 
         schema = get_schema_preset(config.active_schema)
-        # Apply custom prompt override if the user edited the schema
         if schema and config.custom_schema_prompts.get(config.active_schema):
             schema.prompt_description = config.custom_schema_prompts[config.active_schema]
         self.extractor = LegalExtractor(config, schema, self.cost_tracker) if schema else None
@@ -92,16 +66,40 @@ class DocumentProcessor:
             self.extractor.set_progress_callback(self._on_extraction_progress)
 
         self.md_formatter = MarkdownFormatter()
-        self.json_formatter = JSONFormatter()
+        self.rename_coordinator = RenameCoordinator(config, self.emit)
+        self.attachment_processor = AttachmentProcessor(
+            config=config,
+            ocr_pipeline=self.ocr_pipeline,
+            emit_log=self._emit_log,
+            on_page_complete=self._on_ocr_page,
+            on_page_skipped=self._on_page_skipped,
+            on_page_native_text=self._on_page_native_text,
+        )
 
-        # Build the fixed output directory for "cartella" mode.
-        # "accanto" and "sottocartella" are resolved per-file in process_single().
         if config.output_mode == "cartella" and config.output_directory:
             self._fixed_output_dir: Path | None = Path(config.output_directory)
         else:
             self._fixed_output_dir = None
 
         self.writer = OutputWriter(self._fixed_output_dir)
+        self._pending_email_attachment_docs: list[EmailAttachmentDocument] = []
+
+    def _emit_log(self, message: str, level: str = "INFO") -> None:
+        self.emit(LogEvent(message=message, level=level))
+
+    def _fail(
+        self,
+        pdf_path: Path,
+        error_message: str,
+        *,
+        recoverable: bool = False,
+    ) -> tuple[bool, dict]:
+        self.emit(ErrorEvent(error_message=error_message, recoverable=recoverable))
+        cost_info = self.cost_tracker.get_totals()
+        self.emit(PipelineCompleteEvent(
+            pdf_path=pdf_path, success=False, cost_info=cost_info,
+        ))
+        return False, cost_info
 
     def process_single(
         self,
@@ -111,212 +109,24 @@ class DocumentProcessor:
         defer_rename: bool = False,
         deferred_renames: list[dict] | None = None,
     ) -> tuple[bool, dict]:
-        """Process one document through the full pipeline.
-
-        PDF files go through OCR; TXT, EML and MSG files are read directly.
-
-        Returns:
-            Tuple of (success: bool, cost_info: dict)
-        """
         self.cost_tracker.reset()
-        self._pending_email_attachment_docs: list[_EmailAttachmentDocument] = []
+        self._pending_email_attachment_docs = []
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
-        # Phase 1: Text acquisition (OCR for PDF/image, direct read for TXT/EML/MSG,
-        #          or sidecar .txt if OCR is disabled for a PDF)
-        suffix = pdf_path.suffix.lower()
-        is_audio = suffix in AUDIO_EXTENSIONS
-        is_image = suffix in IMAGE_EXTENSIONS
-        _name_lower = pdf_path.name.lower()
-        _is_tarball = _name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz"))
-        is_pdf = (
-            suffix not in _DIRECT_READ_FORMATS
-            and not is_image
-            and not is_audio
-            and not _is_tarball
-        )
-
-        if is_audio:
-            if not self.audio_transcriber:
-                self.emit(ErrorEvent(
-                    error_message=(
-                        "Chiave API Mistral non configurata. "
-                        "Inseriscila nelle Impostazioni → tab API."
-                    ),
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
-
-            self.emit(LogEvent(
-                message=f"Avvio trascrizione audio: {pdf_path.name}  [{self.audio_transcriber.model_id}]"
-            ))
-            try:
-                from ocr.audio_transcriber import AudioTranscriberError
-                trans_result = self.audio_transcriber.transcribe(pdf_path)
-            except Exception as e:
-                self.emit(ErrorEvent(
-                    error_message=f"Errore trascrizione audio: {e}",
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
-
-            self.cost_tracker.add_call(
-                model_id=self.audio_transcriber.model_id,
-                input_tokens=trans_result["input_tokens"],
-                output_tokens=trans_result["output_tokens"],
-                phase="transcription",
-            )
-            ocr_result = self._make_ocr_result_from_text(
-                pdf_path, trans_result["text"]
-            )
-            self.emit(LogEvent(
-                message=(
-                    f"Trascrizione audio completata: "
-                    f"{len(trans_result['text']):,} caratteri, "
-                    f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
-                )
-            ))
-
-        elif is_image:
-            self.emit(LogEvent(
-                message=f"Avvio OCR immagine: {pdf_path.name}  [{self.config.ocr_model_id}]"
-            ))
-            try:
-                ocr_result = self.ocr_pipeline.ocr_single_image(
-                    image_path=pdf_path,
-                    on_page_complete=self._on_ocr_page,
-                    cancel_event=cancel_event,
-                )
-            except Exception as e:
-                self.emit(ErrorEvent(
-                    error_message=f"Errore OCR immagine: {e}",
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
-
-        elif not is_pdf:
-            # TXT / EML / MSG: always read directly, OCR flag is irrelevant
-            try:
-                ocr_result = self._read_text_file(pdf_path, cancel_event)
-            except Exception as e:
-                self.emit(ErrorEvent(
-                    error_message=f"Errore lettura file: {e}",
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
-
-        elif not self.config.run_ocr:
-            # OCR disabled on a PDF: look for a sidecar .txt file
-            sidecar = pdf_path.with_suffix(".txt")
-            if sidecar.exists():
-                self.emit(LogEvent(
-                    message=f"OCR disabilitato: uso testo da '{sidecar.name}'"
-                ))
-                try:
-                    ocr_result = self._read_text_file(sidecar)
-                except Exception as e:
-                    self.emit(ErrorEvent(
-                        error_message=f"Errore lettura sidecar: {e}",
-                        recoverable=False,
-                    ))
-                    cost_info = self.cost_tracker.get_totals()
-                    self.emit(PipelineCompleteEvent(
-                        pdf_path=pdf_path, success=False,
-                        cost_info=cost_info,
-                    ))
-                    return False, cost_info
-            else:
-                self.emit(ErrorEvent(
-                    error_message=(
-                        f"OCR disabilitato ma nessun file sidecar trovato: "
-                        f"'{sidecar.name}' non esiste"
-                    ),
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
-
-        else:
-            # Normal PDF OCR
-            self.emit(LogEvent(
-                message=f"Avvio OCR PDF: {pdf_path.name}  [{self.config.ocr_model_id}]"
-            ))
-            try:
-                ocr_result = self.ocr_pipeline.process_pdf(
-                    pdf_path=pdf_path,
-                    on_page_complete=self._on_ocr_page,
-                    on_page_skipped=self._on_page_skipped,
-                    on_page_native_text=self._on_page_native_text,
-                    cancel_event=cancel_event,
-                )
-            except Exception as e:
-                self.emit(ErrorEvent(
-                    error_message=f"Errore OCR: {e}",
-                    recoverable=False,
-                ))
-                cost_info = self.cost_tracker.get_totals()
-                self.emit(PipelineCompleteEvent(
-                    pdf_path=pdf_path, success=False,
-                    cost_info=cost_info,
-                ))
-                return False, cost_info
+        acquire_result = self._acquire_text(pdf_path, cancel_event)
+        if acquire_result is None:
+            return self._last_fail_result(pdf_path)
+        ocr_result, is_pdf, is_image = acquire_result
 
         if cancel_event.is_set():
             self.emit(LogEvent(message="Elaborazione annullata", level="WARNING"))
             return False, self.cost_tracker.get_totals()
 
-        # Log text acquisition summary
-        ocr_chars = len(ocr_result.combined_text)
-        if (is_pdf or is_image) and self.config.run_ocr:
-            native = ocr_result.native_text_pages
-            ocr_pages = ocr_result.successful_pages - native
-            summary = (
-                f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
-                f"pagine, {ocr_chars:,} caratteri totali"
-            )
-            if native > 0:
-                summary += f" | {native} pagine con testo nativo (OCR saltato)"
-                if ocr_pages > 0:
-                    summary += f", {ocr_pages} pagine OCR"
-            self.emit(LogEvent(message=summary))
+        self._log_acquisition_summary(ocr_result, is_pdf, is_image)
 
         if not ocr_result.combined_text.strip():
-            self.emit(ErrorEvent(
-                error_message="Nessun testo estratto dall'OCR",
-                recoverable=False,
-            ))
-            cost_info = self.cost_tracker.get_totals()
-            self.emit(PipelineCompleteEvent(
-                pdf_path=pdf_path, success=False,
-                cost_info=cost_info,
-            ))
-            return False, cost_info
+            return self._fail(pdf_path, "Nessun testo estratto dall'OCR")
 
-        # Phase 2: Extraction (skip if schema is "none" OR extraction is disabled)
         email_attachment_docs = list(self._pending_email_attachment_docs)
         try:
             extractions = self._extract_entities_for_text(
@@ -331,94 +141,23 @@ class DocumentProcessor:
                     source_label=f"allegato {attachment_doc.filename}",
                 )
         except Exception as e:
-            self.emit(ErrorEvent(
-                error_message=f"Errore estrazione: {e}",
-                recoverable=False,
-            ))
-            self.emit(PipelineCompleteEvent(
-                pdf_path=pdf_path, success=False,
-                cost_info=self.cost_tracker.get_totals(),
-            ))
-            return False, self.cost_tracker.get_totals()
+            return self._fail(pdf_path, f"Errore estrazione: {e}")
 
         if cancel_event.is_set():
             return False, self.cost_tracker.get_totals()
 
-        # Phase 3: Format and write output
         cost_info = self.cost_tracker.get_totals()
-        output_files = []
-        primary_output_files = []
-        attachment_output_files = []
-
-        markdown = None
-        json_data = None
-
-        # When rename is deferred, we will derive names after OCR is complete
-        # for the whole batch.
-        _rename_result: tuple[str, str] | None = None
-
-        if "markdown" in self.config.output_formats:
-            markdown = self.md_formatter.format(
-                extractions=extractions,
-                source_filename=pdf_path.name,
-                total_pages=ocr_result.total_pages,
-                ocr_text=ocr_result.combined_text if self.config.include_ocr_text_in_output else None,
-                cost_info=None,
-            )
-
-        # Resolve per-file output directory based on output_mode.
-        if self.config.output_mode == "sottocartella":
-            per_file_dir = pdf_path.parent / self.config.output_subfolder_name
-            per_file_dir.mkdir(parents=True, exist_ok=True)
-            writer = OutputWriter(per_file_dir)
-        else:
-            # "accanto": OutputWriter(None) writes next to source file
-            # "cartella": self.writer already points to the fixed dir
-            writer = self.writer
-
         try:
-            primary_output_files = writer.write(
-                pdf_path=pdf_path,
-                markdown=markdown,
-                json_data=json_data,
+            output_files, primary_output_files, attachment_output_files = (
+                self._write_outputs(
+                    pdf_path, ocr_result, extractions, email_attachment_docs,
+                )
             )
-            output_files = list(primary_output_files)
-            if "markdown" in self.config.output_formats:
-                for attachment_doc in email_attachment_docs:
-                    attachment_markdown = self.md_formatter.format(
-                        extractions=attachment_doc.extractions,
-                        source_filename=attachment_doc.filename,
-                        total_pages=1,
-                        ocr_text=(
-                            attachment_doc.text
-                            if self.config.include_ocr_text_in_output
-                            else None
-                        ),
-                        cost_info=None,
-                    )
-                    attachment_output_files.extend(writer.write(
-                        pdf_path=pdf_path,
-                        markdown=attachment_markdown,
-                        output_stem=self._attachment_output_stem(
-                            pdf_path.stem,
-                            attachment_doc,
-                        ),
-                    ))
-                output_files.extend(attachment_output_files)
         except Exception as e:
-            self.emit(ErrorEvent(
-                error_message=f"Errore scrittura output: {e}",
-                recoverable=False,
-            ))
-            self.emit(PipelineCompleteEvent(
-                pdf_path=pdf_path, success=False,
-                cost_info=cost_info,
-            ))
-            return False, cost_info
+            return self._fail(pdf_path, f"Errore scrittura output: {e}")
 
         self.emit(OutputWrittenEvent(file_paths=output_files))
 
-        # Phase 4: Rename files based on extracted content (if enabled)
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
         if self.config.rename_files:
@@ -438,31 +177,21 @@ class DocumentProcessor:
                         message=f"Rinomina pianificata dopo OCR batch: {pdf_path.name}"
                     ))
             else:
-                from config.defaults import DEFAULT_RENAME_PROMPT
-                rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
-                _rename_result = derive_filename_from_llm(
-                    ocr_text=ocr_result.combined_text,
-                    api_key=self.config.gemini_api_key,
-                    model_id=self.config.ocr_model_id,
-                    rename_prompt=rename_prompt,
-                    original_filename=pdf_path.name,
-                    rename_examples=rename_history,
-                    user_context_text=(
-                        self.config.rename_user_context_text
-                        if self.config.rename_use_user_context
-                        else ""
-                    ),
+                rename_result = self.rename_coordinator.derive_immediate_rename(
+                    ocr_result.combined_text,
+                    pdf_path.name,
+                    rename_history,
                 )
-                renamed_pdf_path, renamed_primary_outputs = self._rename_files(
+                renamed_pdf_path, renamed_primary = self.rename_coordinator.rename_files(
                     pdf_path,
                     rename_output_files,
-                    _rename_result,
+                    rename_result,
                     rename_history=rename_history,
                 )
                 renamed_output_files = (
-                    renamed_primary_outputs + attachment_output_files
+                    renamed_primary + attachment_output_files
                     if email_attachment_docs
-                    else renamed_primary_outputs
+                    else renamed_primary
                 )
 
         self.emit(PipelineCompleteEvent(
@@ -476,12 +205,240 @@ class DocumentProcessor:
         ))
         return True, cost_info
 
+    def _last_fail_result(self, pdf_path: Path) -> tuple[bool, dict]:
+        cost_info = self.cost_tracker.get_totals()
+        return False, cost_info
+
+    def _acquire_text(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        suffix = pdf_path.suffix.lower()
+        is_audio = suffix in AUDIO_EXTENSIONS
+        is_image = suffix in IMAGE_EXTENSIONS
+        name_lower = pdf_path.name.lower()
+        is_tarball = name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz"))
+        is_pdf = (
+            suffix not in DIRECT_READ_FORMATS
+            and not is_image
+            and not is_audio
+            and not is_tarball
+        )
+
+        if is_audio:
+            return self._acquire_audio(pdf_path, cancel_event)
+        if is_image:
+            return self._acquire_image(pdf_path, cancel_event, is_pdf=False, is_image=True)
+        if not is_pdf:
+            return self._acquire_direct_read(pdf_path, cancel_event, is_pdf=False, is_image=False)
+        if not self.config.run_ocr:
+            return self._acquire_sidecar(pdf_path, cancel_event)
+        return self._acquire_pdf(pdf_path, cancel_event)
+
+    def _acquire_audio(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        if not self.audio_transcriber:
+            self._fail(
+                pdf_path,
+                "Chiave API Mistral non configurata. "
+                "Inseriscila nelle Impostazioni → tab API.",
+            )
+            return None
+
+        self.emit(LogEvent(
+            message=(
+                f"Avvio trascrizione audio: {pdf_path.name}  "
+                f"[{self.audio_transcriber.model_id}]"
+            )
+        ))
+        try:
+            trans_result = self.audio_transcriber.transcribe(pdf_path)
+        except AudioTranscriberError as e:
+            self._fail(pdf_path, f"Errore trascrizione audio: {e}")
+            return None
+        except Exception as e:
+            self._fail(pdf_path, f"Errore trascrizione audio: {e}")
+            return None
+
+        self.cost_tracker.add_call(
+            model_id=self.audio_transcriber.model_id,
+            input_tokens=trans_result["input_tokens"],
+            output_tokens=trans_result["output_tokens"],
+            phase="transcription",
+        )
+        ocr_result = self._make_ocr_result_from_text(pdf_path, trans_result["text"])
+        self.emit(LogEvent(
+            message=(
+                f"Trascrizione audio completata: "
+                f"{len(trans_result['text']):,} caratteri, "
+                f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
+            )
+        ))
+        return ocr_result, False, False
+
+    def _acquire_image(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+        *,
+        is_pdf: bool,
+        is_image: bool,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        self.emit(LogEvent(
+            message=f"Avvio OCR immagine: {pdf_path.name}  [{self.config.ocr_model_id}]"
+        ))
+        try:
+            ocr_result = self.ocr_pipeline.ocr_single_image(
+                image_path=pdf_path,
+                on_page_complete=self._on_ocr_page,
+                cancel_event=cancel_event,
+            )
+        except Exception as e:
+            self._fail(pdf_path, f"Errore OCR immagine: {e}")
+            return None
+        return ocr_result, is_pdf, is_image
+
+    def _acquire_direct_read(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+        *,
+        is_pdf: bool,
+        is_image: bool,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        try:
+            ocr_result, pending = self.attachment_processor.read_text_file(
+                pdf_path, cancel_event,
+            )
+            self._pending_email_attachment_docs = pending
+        except Exception as e:
+            self._fail(pdf_path, f"Errore lettura file: {e}")
+            return None
+        return ocr_result, is_pdf, is_image
+
+    def _acquire_sidecar(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        sidecar = pdf_path.with_suffix(".txt")
+        if not sidecar.exists():
+            self._fail(
+                pdf_path,
+                f"OCR disabilitato ma nessun file sidecar trovato: "
+                f"'{sidecar.name}' non esiste",
+            )
+            return None
+        self.emit(LogEvent(
+            message=f"OCR disabilitato: uso testo da '{sidecar.name}'"
+        ))
+        try:
+            ocr_result, _ = self.attachment_processor.read_text_file(sidecar)
+        except Exception as e:
+            self._fail(pdf_path, f"Errore lettura sidecar: {e}")
+            return None
+        return ocr_result, True, False
+
+    def _acquire_pdf(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        self.emit(LogEvent(
+            message=f"Avvio OCR PDF: {pdf_path.name}  [{self.config.ocr_model_id}]"
+        ))
+        try:
+            ocr_result = self.ocr_pipeline.process_pdf(
+                pdf_path=pdf_path,
+                on_page_complete=self._on_ocr_page,
+                on_page_skipped=self._on_page_skipped,
+                on_page_native_text=self._on_page_native_text,
+                cancel_event=cancel_event,
+            )
+        except Exception as e:
+            self._fail(pdf_path, f"Errore OCR: {e}")
+            return None
+        return ocr_result, True, False
+
+    def _log_acquisition_summary(
+        self,
+        ocr_result: OCRResult,
+        is_pdf: bool,
+        is_image: bool,
+    ) -> None:
+        ocr_chars = len(ocr_result.combined_text)
+        if (is_pdf or is_image) and self.config.run_ocr:
+            native = ocr_result.native_text_pages
+            ocr_pages = ocr_result.successful_pages - native
+            summary = (
+                f"OCR completato: {ocr_result.successful_pages}/{ocr_result.total_pages} "
+                f"pagine, {ocr_chars:,} caratteri totali"
+            )
+            if native > 0:
+                summary += f" | {native} pagine con testo nativo (OCR saltato)"
+                if ocr_pages > 0:
+                    summary += f", {ocr_pages} pagine OCR"
+            self.emit(LogEvent(message=summary))
+
+    def _write_outputs(
+        self,
+        pdf_path: Path,
+        ocr_result: OCRResult,
+        extractions: list[dict],
+        email_attachment_docs: list[EmailAttachmentDocument],
+    ) -> tuple[list[Path], list[Path], list[Path]]:
+        markdown = self.md_formatter.format(
+            extractions=extractions,
+            source_filename=pdf_path.name,
+            total_pages=ocr_result.total_pages,
+            ocr_text=(
+                ocr_result.combined_text
+                if self.config.include_ocr_text_in_output
+                else None
+            ),
+            cost_info=None,
+        )
+
+        if self.config.output_mode == "sottocartella":
+            per_file_dir = pdf_path.parent / self.config.output_subfolder_name
+            per_file_dir.mkdir(parents=True, exist_ok=True)
+            writer = OutputWriter(per_file_dir)
+        else:
+            writer = self.writer
+
+        primary_output_files = writer.write(pdf_path=pdf_path, markdown=markdown)
+        output_files = list(primary_output_files)
+        attachment_output_files: list[Path] = []
+
+        for attachment_doc in email_attachment_docs:
+            attachment_markdown = self.md_formatter.format(
+                extractions=attachment_doc.extractions,
+                source_filename=attachment_doc.filename,
+                total_pages=1,
+                ocr_text=(
+                    attachment_doc.text
+                    if self.config.include_ocr_text_in_output
+                    else None
+                ),
+                cost_info=None,
+            )
+            attachment_output_files.extend(writer.write(
+                pdf_path=pdf_path,
+                markdown=attachment_markdown,
+                output_stem=attachment_output_stem(pdf_path.stem, attachment_doc),
+            ))
+        output_files.extend(attachment_output_files)
+        return output_files, primary_output_files, attachment_output_files
+
     def _extract_entities_for_text(
         self,
         text: str,
         source_label: str = "documento",
     ) -> list[dict]:
-        """Run structured extraction for one text block when enabled."""
         if not self.config.run_extraction or self.extractor is None:
             reason = (
                 "LangExtract disabilitato"
@@ -528,7 +485,6 @@ class DocumentProcessor:
         pdf_paths: list[Path],
         cancel_event: threading.Event,
     ) -> None:
-        """Process multiple PDFs sequentially."""
         successful = 0
         failed = 0
         total_cost_tracker = CostTracker()
@@ -544,23 +500,19 @@ class DocumentProcessor:
                 message=f"Documento {i + 1}/{len(pdf_paths)}: {pdf_path.name}"
             ))
 
-            success, cost_info = self.process_single(
+            success, _cost_info = self.process_single(
                 pdf_path,
                 cancel_event,
                 rename_history=rename_history,
-                defer_rename=self.config.rename_files and self.config.rename_use_batch_context,
+                defer_rename=(
+                    self.config.rename_files
+                    and self.config.rename_use_batch_context
+                ),
                 deferred_renames=deferred_renames,
             )
-            
-            # Accumula i costi nel total_cost_tracker (salva prima che vengano resettati)
-            for call in self.cost_tracker._calls:
-                total_cost_tracker.add_call(
-                    model_id=call.model_id,
-                    input_tokens=call.input_tokens,
-                    output_tokens=call.output_tokens,
-                    phase=call.phase,
-                )
-            
+
+            total_cost_tracker.merge_from(self.cost_tracker)
+
             if success:
                 successful += 1
             else:
@@ -572,13 +524,12 @@ class DocumentProcessor:
             and not cancel_event.is_set()
             and deferred_renames
         ):
-            self._run_deferred_renames(
+            self.rename_coordinator.run_deferred_renames(
                 deferred_renames=deferred_renames,
                 rename_history=rename_history,
                 cancel_event=cancel_event,
             )
 
-        # Mostra il resoconto totale alla fine
         total_cost_info = total_cost_tracker.get_totals()
         total = total_cost_info.get("total", {})
         ocr_cost = total_cost_info.get("ocr", {})
@@ -587,31 +538,39 @@ class DocumentProcessor:
         self.emit(LogEvent(
             message=f"Conversione completata: {successful} riusciti, {failed} falliti"
         ))
+        self.emit(LogEvent(message="Resoconto totale conversione:"))
         self.emit(LogEvent(
-            message=f"Resoconto totale conversione:"
-        ))
-        self.emit(LogEvent(
-            message=f"  - Token utilizzati: {total.get('input_tokens', 0):,} input + "
-                    f"{total.get('output_tokens', 0):,} output"
+            message=(
+                f"  - Token utilizzati: {total.get('input_tokens', 0):,} input + "
+                f"{total.get('output_tokens', 0):,} output"
+            )
         ))
         self.emit(LogEvent(
             message=f"  - Costo OCR: ${ocr_cost.get('cost_usd', 0):.4f}"
         ))
         if ext_cost.get("cost_usd", 0) > 0:
             self.emit(LogEvent(
-                message=f"  - Costo estrazione: ~${ext_cost.get('cost_usd', 0):.4f} (stimato)"
+                message=(
+                    f"  - Costo estrazione: ~${ext_cost.get('cost_usd', 0):.4f} (stimato)"
+                )
             ))
         trans_cost = total_cost_info.get("transcription", {})
         if trans_cost.get("cost_usd", 0) > 0:
             self.emit(LogEvent(
-                message=f"  - Costo trascrizione audio: ~${trans_cost.get('cost_usd', 0):.4f} (stimato)"
+                message=(
+                    f"  - Costo trascrizione audio: "
+                    f"~${trans_cost.get('cost_usd', 0):.4f} (stimato)"
+                )
             ))
         self.emit(LogEvent(
             message=f"  - Costo totale: ${total.get('cost_usd', 0):.4f}"
         ))
         if self._native_pages_batch > 0:
             self.emit(LogEvent(
-                message=f"  - Pagine con testo nativo (OCR saltato): {self._native_pages_batch}"
+                message=(
+                    f"  - Pagine con testo nativo (OCR saltato): "
+                    f"{self._native_pages_batch}"
+                )
             ))
 
         self.emit(BatchCompleteEvent(
@@ -621,208 +580,15 @@ class DocumentProcessor:
         ))
 
     @staticmethod
-    def _safe_output_stem_component(value: str, fallback: str) -> str:
-        text = Path(str(value)).stem or fallback
-        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", text)
-        text = re.sub(r"\s+", " ", text).strip(" .")
-        return text[:90] or fallback
-
-    def _attachment_output_stem(
-        self,
-        email_stem: str,
-        attachment_doc: _EmailAttachmentDocument,
-    ) -> str:
-        base = self._safe_output_stem_component(email_stem, "email")
-        attachment = self._safe_output_stem_component(
-            attachment_doc.filename,
-            f"allegato {attachment_doc.index}",
+    def _make_ocr_result_from_text(file_path: Path, text: str) -> OCRResult:
+        return OCRResult(
+            pdf_path=file_path,
+            combined_text=text,
+            total_pages=1,
+            successful_pages=1,
         )
-        return f"{base} - Allegato {attachment_doc.index} - {attachment}"
-
-    def _rename_files(
-        self,
-        pdf_path: Path,
-        output_files: list[Path],
-        rename_result: tuple[str, str],
-        rename_history: list[dict] | None = None,
-    ) -> tuple[Path, list[Path]]:
-        """Rename PDF source and/or MD output using the pre-computed filename parts.
-
-        Returns:
-            Tuple of (possibly_renamed_pdf_path, possibly_renamed_output_files).
-        """
-        date_str, description = rename_result
-        self.emit(LogEvent(
-            message=f"Rinomina file: data={date_str}, descrizione='{description}'"
-        ))
-
-        renamed_pdf = pdf_path
-        renamed_outputs = list(output_files)
-        history_final_name: str | None = None
-
-        # Rename output MD file
-        if self.config.rename_mode in ("md", "both"):
-            for i, fp in enumerate(renamed_outputs):
-                if fp.suffix.lower() == ".md":
-                    new_path = build_new_filepath(fp, date_str, description)
-                    try:
-                        actual_path = rename_file(fp, new_path)
-                        self.emit(FileRenamedEvent(
-                            original_path=fp, new_path=actual_path, file_type="md",
-                        ))
-                        renamed_outputs[i] = actual_path
-                        history_final_name = history_final_name or actual_path.name
-                    except OSError as e:
-                        self.emit(LogEvent(
-                            message=f"Errore rinomina MD: {e}", level="ERROR",
-                        ))
-
-        # Rename source PDF
-        if self.config.rename_mode in ("pdf", "both"):
-            new_pdf_path = build_new_filepath(pdf_path, date_str, description)
-            try:
-                actual_pdf_path = rename_file(pdf_path, new_pdf_path)
-                self.emit(FileRenamedEvent(
-                    original_path=pdf_path, new_path=actual_pdf_path, file_type="pdf",
-                ))
-                renamed_pdf = actual_pdf_path
-                history_final_name = actual_pdf_path.name
-            except OSError as e:
-                self.emit(LogEvent(
-                    message=f"Errore rinomina PDF: {e}", level="ERROR",
-                ))
-
-        if rename_history is not None and history_final_name:
-            rename_history.append({
-                "file_type": "document",
-                "original_name": pdf_path.name,
-                "final_name": history_final_name,
-                "date_str": date_str,
-                "description": description,
-            })
-
-        return renamed_pdf, renamed_outputs
-
-    def _run_deferred_renames(
-        self,
-        deferred_renames: list[dict],
-        rename_history: list[dict],
-        cancel_event: threading.Event,
-    ) -> None:
-        """Run batch rename after all OCR passes are completed."""
-        from config.defaults import DEFAULT_RENAME_PROMPT
-
-        rename_prompt = self.config.rename_prompt or DEFAULT_RENAME_PROMPT
-        batch_documents = self._build_batch_documents_context(deferred_renames)
-        batch_profiles = derive_batch_profiles_from_llm(
-            batch_documents=batch_documents,
-            api_key=self.config.gemini_api_key,
-            model_id=self.config.ocr_model_id,
-            user_context_text=(
-                self.config.rename_user_context_text
-                if self.config.rename_use_user_context
-                else ""
-            ),
-        )
-        self._apply_batch_profiles(batch_documents, batch_profiles)
-        total = len(deferred_renames)
-        self.emit(LogEvent(
-            message=f"Avvio rinomina post-OCR su {total} documenti"
-        ))
-
-        for idx, item in enumerate(deferred_renames, 1):
-            if cancel_event.is_set():
-                self.emit(LogEvent(
-                    message="Rinomina post-OCR annullata", level="WARNING"
-                ))
-                break
-
-            pdf_path: Path = item["pdf_path"]
-            output_files: list[Path] = item["output_files"]
-            ocr_text: str = item["ocr_text"]
-            self.emit(LogEvent(
-                message=f"Rinomina post-OCR {idx}/{total}: {pdf_path.name}"
-            ))
-            rename_result = derive_filename_from_llm(
-                ocr_text=ocr_text,
-                api_key=self.config.gemini_api_key,
-                model_id=self.config.ocr_model_id,
-                rename_prompt=rename_prompt,
-                original_filename=pdf_path.name,
-                rename_examples=rename_history,
-                batch_documents=batch_documents,
-                current_doc_id=item.get("doc_id"),
-                user_context_text=(
-                    self.config.rename_user_context_text
-                    if self.config.rename_use_user_context
-                    else ""
-                ),
-            )
-            self._rename_files(
-                pdf_path=pdf_path,
-                output_files=output_files,
-                rename_result=rename_result,
-                rename_history=rename_history,
-            )
-
-    @staticmethod
-    def _build_batch_documents_context(deferred_renames: list[dict]) -> list[dict]:
-        """Prepare compact OCR previews for all documents in batch."""
-        docs: list[dict] = []
-        for item in deferred_renames:
-            ocr_text = str(item.get("ocr_text", "")).strip()
-            preview_start = ocr_text[:1200]
-            mid = len(ocr_text) // 2
-            preview_middle = ocr_text[mid:mid + 700]
-            docs.append({
-                "doc_id": item.get("doc_id"),
-                "original_name": str(item.get("original_name", "")).strip(),
-                "ocr_preview_start": preview_start,
-                "ocr_preview_middle": preview_middle,
-                "keyword_hint": DocumentProcessor._extract_keyword_hint(ocr_text),
-            })
-        return docs
-
-    @staticmethod
-    def _apply_batch_profiles(batch_documents: list[dict], profiles: dict[int, dict]) -> None:
-        """Merge LLM-derived document profiles into batch context in-place."""
-        if not profiles:
-            return
-        for doc in batch_documents:
-            doc_id = doc.get("doc_id")
-            if doc_id is None:
-                continue
-            profile = profiles.get(int(doc_id))
-            if not profile:
-                continue
-            doc["profile_primary_topic"] = profile.get("primary_topic", "")
-            doc["profile_focus"] = profile.get("distinguishing_focus", "")
-            doc["profile_naming_hint"] = profile.get("naming_hint", "")
-            doc["profile_terms"] = profile.get("distinctive_terms", [])
-
-    @staticmethod
-    def _extract_keyword_hint(text: str, max_terms: int = 8) -> str:
-        """Extract lightweight generic keywords from OCR text."""
-        if not text:
-            return ""
-        tokens = re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9_-]{2,}", text.lower())
-        stopwords = {
-            "the", "and", "for", "with", "this", "that", "from", "sono", "della",
-            "delle", "degli", "dello", "dalla", "dalle", "dei", "del", "alla",
-            "alle", "agli", "allo", "nell", "nella", "nelle", "negli", "sulla",
-            "sulle", "sugli", "come", "anche", "solo", "dopo", "prima", "quando",
-            "quindi", "perche", "dove", "quali", "quale", "documento", "pagina",
-            "slide", "webinar", "appunti", "file", "testo", "sono", "una", "uno",
-            "dati", "data", "anno", "mese", "giorno", "dell", "all", "degli",
-        }
-        counts = Counter(t for t in tokens if t not in stopwords and not t.isdigit())
-        if not counts:
-            return ""
-        terms = [term for term, _ in counts.most_common(max_terms)]
-        return ", ".join(terms)
 
     def _on_ocr_page(self, page_num: int, total_pages: int, success: bool) -> None:
-        """Callback from OCR pipeline after each page."""
         cost = self.cost_tracker.get_last_call_cost()
         in_tok, out_tok = self.cost_tracker.get_last_call_tokens()
 
@@ -844,20 +610,27 @@ class DocumentProcessor:
         ))
 
     def _on_page_skipped(self, page_num: int, total_pages: int, reason: str) -> None:
-        """Callback from OCR pipeline when a page returns empty text."""
         self.emit(PageSkippedEvent(
             page_num=page_num,
             total_pages=total_pages,
             reason=reason,
         ))
+        self.emit(LogEvent(
+            message=(
+                f"Pagina {page_num + 1}/{total_pages} saltata "
+                f"(nessun testo): {reason}"
+            ),
+            level="WARNING",
+        ))
 
     def _on_page_native_text(
-        self, page_num: int, total_pages: int, char_count: int, reason: str
+        self,
+        page_num: int,
+        total_pages: int,
+        char_count: int,
+        reason: str,
     ) -> None:
-        """Callback from OCR pipeline when a page has native text (OCR skipped)."""
-        # Increment batch counter (attribute may not exist if called outside process_batch)
         self._native_pages_batch = getattr(self, "_native_pages_batch", 0) + 1
-
         self.emit(PageNativeTextEvent(
             page_num=page_num,
             total_pages=total_pages,
@@ -867,478 +640,9 @@ class DocumentProcessor:
         self.emit(LogEvent(
             message=(
                 f"Pagina {page_num + 1}/{total_pages}: testo nativo "
-                f"({char_count:,} car.) - OCR saltato"
+                f"({char_count:,} car.) — OCR saltato ({reason})"
             )
         ))
 
     def _on_extraction_progress(self, **kwargs) -> None:
-        """Callback from LegalExtractor as batches of chunks complete."""
         self.emit(ExtractionProgressEvent(**kwargs))
-
-    @staticmethod
-    def _make_ocr_result_from_text(file_path: Path, text: str):
-        """Wrap a plain text string into an OCRResult (1 page, no OCR)."""
-        from ocr.ocr_pipeline import OCRResult
-        return OCRResult(
-            pdf_path=file_path,
-            combined_text=text,
-            total_pages=1,
-            successful_pages=1,
-        )
-
-    def _read_text_file(self, file_path: Path, cancel_event: threading.Event | None = None):
-        """Read/unpack content directly from text, container and archive files (no OCR)."""
-        from ocr.ocr_pipeline import OCRResult
-
-        suffix = file_path.suffix.lower()
-        name_lower = file_path.name.lower()
-
-        if suffix == ".eml":
-            if getattr(self.config, "email_attachments_separate", False):
-                text, self._pending_email_attachment_docs = self._extract_eml_parts(
-                    file_path,
-                    cancel_event,
-                )
-            else:
-                text = self._extract_eml_text(file_path, cancel_event)
-            self.emit(LogEvent(message="File EML letto direttamente"))
-        elif suffix == ".msg":
-            if getattr(self.config, "email_attachments_separate", False):
-                text, self._pending_email_attachment_docs = self._extract_msg_parts(
-                    file_path,
-                    cancel_event,
-                )
-            else:
-                text = self._extract_msg_text(file_path, cancel_event)
-            self.emit(LogEvent(message="File MSG letto direttamente"))
-        elif suffix == ".docx":
-            text = self._extract_docx_text(file_path)
-            self.emit(LogEvent(message="File DOCX letto direttamente"))
-        elif suffix in (".html", ".htm"):
-            text = self._extract_html_text(file_path)
-            self.emit(LogEvent(message="File HTML letto direttamente"))
-        elif suffix == ".rtf":
-            text = self._extract_rtf_text(file_path)
-            self.emit(LogEvent(message="File RTF letto direttamente"))
-        elif suffix == ".md":
-            text = file_path.read_text(encoding="utf-8", errors="replace")
-            self.emit(LogEvent(message="File MD letto direttamente"))
-        elif suffix == ".p7m":
-            self.emit(LogEvent(message=f"Estrazione firma P7M: {file_path.name}"))
-            text = self._extract_p7m_text(file_path, cancel_event)
-        elif suffix in ARCHIVE_EXTENSIONS or name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
-            fmt = suffix.lstrip(".").upper() if suffix in ARCHIVE_EXTENSIONS else "TAR"
-            self.emit(LogEvent(message=f"Apertura archivio {fmt}: {file_path.name}"))
-            text = self._extract_archive_text(file_path, cancel_event)
-        else:
-            text = file_path.read_text(encoding="utf-8", errors="replace")
-            self.emit(LogEvent(message="File TXT letto direttamente"))
-
-        return OCRResult(
-            pdf_path=file_path,
-            combined_text=text,
-            total_pages=1,
-            successful_pages=1,
-        )
-
-    def _extract_eml_text(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> str:
-        """Extract text from an EML file, including headers, body and OCR of attachments."""
-        body_text, attachments = self._extract_eml_parts(file_path, cancel_event)
-        return self._join_email_and_attachments(body_text, attachments)
-
-    def _extract_eml_parts(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> tuple[str, list[_EmailAttachmentDocument]]:
-        """Extract an EML body and convert attachments as separate text blocks."""
-        msg = email.message_from_bytes(
-            file_path.read_bytes(),
-            policy=email.policy.default,
-        )
-
-        parts = []
-
-        # Headers
-        for header in ("date", "from", "to", "cc", "subject"):
-            value = msg.get(header, "").strip()
-            if value:
-                parts.append(f"{header.capitalize()}: {value}")
-        if parts:
-            parts.append("")
-
-        # Body (only non-attachment text/plain parts)
-        for part in msg.walk():
-            if (
-                part.get_content_type() == "text/plain"
-                and part.get_content_disposition() != "attachment"
-            ):
-                try:
-                    body = part.get_content()
-                    if body and body.strip():
-                        parts.append(body)
-                except Exception:
-                    pass
-
-        # Collect attachments
-        att_list: list[tuple[str, bytes]] = []
-        for part in msg.walk():
-            if part.get_content_disposition() == "attachment":
-                raw_name = part.get_filename() or f"allegato_{len(att_list) + 1}"
-                payload = part.get_payload(decode=True)
-                if payload:
-                    att_list.append((raw_name, payload))
-
-        if att_list:
-            names = ", ".join(n for n, _ in att_list)
-            self.emit(LogEvent(
-                message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
-            ))
-        attachment_docs: list[_EmailAttachmentDocument] = []
-        if att_list:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                for i, (name, data) in enumerate(att_list, 1):
-                    if cancel_event and cancel_event.is_set():
-                        break
-                    safe_name = Path(name).name or f"allegato_{i}"
-                    att_path = Path(tmpdir) / safe_name
-                    att_path.write_bytes(data)
-                    self.emit(LogEvent(
-                        message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
-                    ))
-                    att_text = self._process_attachment(att_path, cancel_event)
-                    if att_text:
-                        attachment_docs.append(_EmailAttachmentDocument(
-                            index=i,
-                            filename=name,
-                            text=att_text,
-                        ))
-
-        return "\n".join(parts), attachment_docs
-
-    def _extract_msg_text(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> str:
-        """Extract text from an Outlook MSG file, including headers, body and OCR of attachments."""
-        body_text, attachments = self._extract_msg_parts(file_path, cancel_event)
-        return self._join_email_and_attachments(body_text, attachments)
-
-    def _extract_msg_parts(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> tuple[str, list[_EmailAttachmentDocument]]:
-        """Extract a MSG body and convert attachments as separate text blocks."""
-        import extract_msg
-
-        parts = []
-        att_list: list[tuple[str, bytes]] = []
-
-        with extract_msg.openMsg(file_path) as msg:
-            header_map = [
-                ("Date", msg.date),
-                ("From", msg.sender),
-                ("To", msg.to),
-                ("Cc", msg.cc),
-                ("Subject", msg.subject),
-            ]
-            for label, value in header_map:
-                if value and str(value).strip():
-                    parts.append(f"{label}: {value}")
-            if parts:
-                parts.append("")
-
-            body = msg.body
-            if body and body.strip():
-                parts.append(body)
-
-            for attachment in msg.attachments:
-                name = (
-                    getattr(attachment, "longFilename", None)
-                    or getattr(attachment, "shortFilename", None)
-                    or f"allegato_{len(att_list) + 1}"
-                )
-                data = getattr(attachment, "data", None)
-                if data:
-                    att_list.append((name, data))
-
-        if att_list:
-            names = ", ".join(n for n, _ in att_list)
-            self.emit(LogEvent(
-                message=f"Trovati {len(att_list)} allegati in {file_path.name}: {names}"
-            ))
-        attachment_docs: list[_EmailAttachmentDocument] = []
-        if att_list:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                for i, (name, data) in enumerate(att_list, 1):
-                    if cancel_event and cancel_event.is_set():
-                        break
-                    safe_name = Path(name).name or f"allegato_{i}"
-                    att_path = Path(tmpdir) / safe_name
-                    att_path.write_bytes(data)
-                    self.emit(LogEvent(
-                        message=f"Elaborazione allegato {i}/{len(att_list)}: {name}"
-                    ))
-                    att_text = self._process_attachment(att_path, cancel_event)
-                    if att_text:
-                        attachment_docs.append(_EmailAttachmentDocument(
-                            index=i,
-                            filename=name,
-                            text=att_text,
-                        ))
-
-        return "\n".join(parts), attachment_docs
-
-    @staticmethod
-    def _join_email_and_attachments(
-        body_text: str,
-        attachments: list[_EmailAttachmentDocument],
-    ) -> str:
-        parts = [body_text] if body_text else []
-        for attachment in attachments:
-            parts.append(
-                f"\n\n--- ALLEGATO {attachment.index}: {attachment.filename} ---\n\n"
-            )
-            parts.append(attachment.text)
-        return "\n".join(parts)
-
-    def _extract_p7m_text(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> str:
-        """Extract the inner payload from a CMS/PKCS#7 signed file (.p7m)."""
-        try:
-            from asn1crypto import cms as asn1_cms
-        except ImportError:
-            raise RuntimeError(
-                "Libreria asn1crypto non trovata. Eseguire: pip install asn1crypto"
-            )
-
-        data = file_path.read_bytes()
-        try:
-            content_info = asn1_cms.ContentInfo.load(data)
-            if content_info["content_type"].native != "signed_data":
-                raise ValueError(
-                    f"Tipo P7M non riconosciuto: {content_info['content_type'].native}"
-                )
-            encap = content_info["content"]["encap_content_info"]
-            inner_bytes = encap["content"].native  # bytes of inner file
-            if not inner_bytes:
-                raise ValueError("P7M senza contenuto (eContent vuoto)")
-        except Exception as e:
-            raise RuntimeError(f"Parsing P7M '{file_path.name}' fallito: {e}") from e
-
-        # Detect inner type: "documento.pdf.p7m" → stem="documento.pdf" → suffix=".pdf"
-        inner_name = file_path.stem        # e.g. "documento.pdf"
-        inner_suffix = Path(inner_name).suffix.lower()
-
-        # Magic-byte fallback if the inner name has no useful extension
-        if not inner_suffix or inner_suffix == file_path.suffix.lower():
-            if inner_bytes[:4] == b"%PDF":
-                inner_suffix = ".pdf"
-            elif inner_bytes[:2] == b"PK":
-                inner_suffix = ".zip"
-            elif inner_bytes[:5] == b"<?xml":
-                inner_suffix = ".xml"
-            else:
-                inner_suffix = ".bin"
-            inner_name = file_path.stem + inner_suffix
-
-        self.emit(LogEvent(
-            message=(
-                f"P7M estratto: {inner_name}  "
-                f"({len(inner_bytes):,} byte)"
-            )
-        ))
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            inner_path = Path(tmpdir) / inner_name
-            inner_path.write_bytes(inner_bytes)
-            return self._process_attachment(inner_path, cancel_event)
-
-    def _extract_archive_text(
-        self, file_path: Path, cancel_event: threading.Event | None = None
-    ) -> str:
-        """Extract and process all files inside a ZIP, 7Z or TAR archive."""
-        import zipfile
-        import tarfile as tarfile_mod
-
-        suffix = file_path.suffix.lower()
-        name_lower = file_path.name.lower()
-
-        members: list[tuple[str, bytes]] = []  # (member name, raw bytes)
-
-        try:
-            if suffix == ".zip":
-                with zipfile.ZipFile(file_path) as zf:
-                    for info in zf.infolist():
-                        if info.is_dir():
-                            continue
-                        members.append((info.filename, zf.read(info.filename)))
-
-            elif suffix == ".7z":
-                import py7zr
-                with py7zr.SevenZipFile(file_path, mode="r") as zf:
-                    for name, bio in zf.read().items():
-                        members.append((name, bio.read()))
-
-            elif suffix in (".tar", ".tgz") or name_lower.endswith(
-                (".tar.gz", ".tar.bz2", ".tar.xz")
-            ):
-                with tarfile_mod.open(file_path) as tf:
-                    for member in tf.getmembers():
-                        if not member.isfile():
-                            continue
-                        fobj = tf.extractfile(member)
-                        if fobj:
-                            members.append((member.name, fobj.read()))
-
-        except Exception as e:
-            raise RuntimeError(
-                f"Impossibile aprire l'archivio '{file_path.name}': {e}"
-            ) from e
-
-        if not members:
-            self.emit(LogEvent(
-                message=f"Archivio '{file_path.name}' vuoto o senza file supportati",
-                level="WARNING",
-            ))
-            return ""
-
-        # Filter out hidden/system entries
-        members = [
-            (n, d) for n, d in members
-            if not Path(n).name.startswith((".", "__", "~"))
-        ]
-
-        self.emit(LogEvent(
-            message=f"Archivio '{file_path.name}': {len(members)} file da elaborare"
-        ))
-
-        parts: list[str] = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp = Path(tmpdir)
-            for i, (name, data) in enumerate(members, 1):
-                if cancel_event and cancel_event.is_set():
-                    break
-                base = Path(name).name
-                dest = tmp / base
-                # Avoid collisions
-                if dest.exists():
-                    dest = tmp / f"{i}_{base}"
-                dest.write_bytes(data)
-                self.emit(LogEvent(
-                    message=f"Elaborazione {i}/{len(members)} da archivio: {name}"
-                ))
-                text = self._process_attachment(dest, cancel_event)
-                if text:
-                    parts.append(f"\n\n--- FILE {i}: {name} ---\n\n")
-                    parts.append(text)
-
-        return "\n".join(parts)
-
-    def _process_attachment(
-        self, att_path: Path, cancel_event: threading.Event | None = None
-    ) -> str:
-        """Process a single attachment and return its text content.
-
-        PDFs and images go through OCR; other supported formats are read directly.
-        Unsupported types are skipped with a warning.
-        """
-        _cancel = cancel_event or threading.Event()
-        suffix = att_path.suffix.lower()
-        try:
-            if suffix == ".pdf":
-                result = self.ocr_pipeline.process_pdf(
-                    pdf_path=att_path,
-                    on_page_complete=self._on_ocr_page,
-                    on_page_skipped=self._on_page_skipped,
-                    on_page_native_text=self._on_page_native_text,
-                    cancel_event=_cancel,
-                )
-                return result.combined_text
-            elif suffix in IMAGE_EXTENSIONS:
-                result = self.ocr_pipeline.ocr_single_image(
-                    image_path=att_path,
-                    on_page_complete=self._on_ocr_page,
-                    cancel_event=_cancel,
-                )
-                return result.combined_text
-            elif suffix == ".docx":
-                return self._extract_docx_text(att_path)
-            elif suffix in (".html", ".htm"):
-                return self._extract_html_text(att_path)
-            elif suffix == ".rtf":
-                return self._extract_rtf_text(att_path)
-            elif suffix in (".txt", ".md"):
-                return att_path.read_text(encoding="utf-8", errors="replace")
-            elif suffix == ".p7m":
-                return self._extract_p7m_text(att_path, cancel_event)
-            elif suffix in ARCHIVE_EXTENSIONS or att_path.name.lower().endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
-                return self._extract_archive_text(att_path, cancel_event)
-            else:
-                self.emit(LogEvent(
-                    message=f"Allegato '{att_path.name}' ({suffix}) non supportato - saltato",
-                    level="WARNING",
-                ))
-                return ""
-        except Exception as e:
-            self.emit(LogEvent(
-                message=f"Errore elaborazione allegato '{att_path.name}': {e}",
-                level="ERROR",
-            ))
-            return ""
-
-    @staticmethod
-    def _extract_docx_text(file_path: Path) -> str:
-        """Extract plain-text from DOCX files using python-docx."""
-        import docx
-        doc = docx.Document(file_path)
-        parts = []
-        for p in doc.paragraphs:
-            if p.text:
-                parts.append(p.text)
-        return "\n".join(parts)
-
-    @staticmethod
-    def _extract_html_text(file_path: Path) -> str:
-        """Extract plain-text and metadata from HTML files using beautifulsoup4."""
-        import re
-        from bs4 import BeautifulSoup
-        
-        html_content = file_path.read_text(encoding="utf-8", errors="replace")
-        parts = []
-        
-        # 1. Try to find the "saved from url" comment (often added by browsers like Chrome/Edge)
-        saved_url_match = re.search(r'<!--\s*saved from url=\(\d+\)(.*?)\s*-->', html_content)
-        if saved_url_match:
-            parts.append(f"Source URL: {saved_url_match.group(1).strip()}")
-            
-        soup = BeautifulSoup(html_content, "html.parser")
-        
-        # 2. Extract Title
-        if soup.title and soup.title.string:
-            parts.append(f"Title: {soup.title.string.strip()}")
-            
-        # 3. Extract common meta tags
-        for meta_name in ["description", "author", "keywords"]:
-            meta_tag = soup.find("meta", attrs={"name": lambda x: x and x.lower() == meta_name})
-            if meta_tag and meta_tag.get("content"):
-                parts.append(f"{meta_name.capitalize()}: {meta_tag.get('content').strip()}")
-                
-        # 4. Extract Canonical URL (if source URL wasn't found)
-        canonical = soup.find("link", rel="canonical")
-        if canonical and canonical.get("href") and not saved_url_match:
-            parts.append(f"Canonical URL: {canonical.get('href').strip()}")
-            
-        if parts:
-            parts.append("\n--- TESTO DEL SITO ---")
-            
-        # 5. Extract actual body text
-        parts.append(soup.get_text(separator="\n", strip=True))
-        
-        return "\n".join(parts)
-
-    @staticmethod
-    def _extract_rtf_text(file_path: Path) -> str:
-        """Extract plain-text from RTF files using striprtf."""
-        from striprtf.striprtf import rtf_to_text
-        rtf_content = file_path.read_text(encoding="utf-8", errors="replace")
-        return rtf_to_text(rtf_content)

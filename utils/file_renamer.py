@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import shutil
+from collections import Counter
 from pathlib import Path
 
 from google import genai
@@ -15,6 +16,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def extract_keyword_hint(text: str, max_terms: int = 8) -> str:
+    """Extract lightweight generic keywords from OCR text."""
+    if not text:
+        return ""
+    tokens = re.findall(
+        r"[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9_-]{2,}",
+        text.lower(),
+    )
+    stopwords = {
+        "the", "and", "for", "with", "this", "that", "from", "sono", "della",
+        "delle", "degli", "dello", "dalla", "dalle", "dei", "del", "alla",
+        "alle", "agli", "allo", "nell", "nella", "nelle", "negli", "sulla",
+        "sulle", "sugli", "come", "anche", "solo", "dopo", "prima", "quando",
+        "quindi", "perche", "dove", "quali", "quale", "documento", "pagina",
+        "slide", "webinar", "appunti", "file", "testo", "sono", "una", "uno",
+        "dati", "data", "anno", "mese", "giorno", "dell", "all", "degli",
+    }
+    counts = Counter(t for t in tokens if t not in stopwords and not t.isdigit())
+    if not counts:
+        return ""
+    terms = [term for term, _ in counts.most_common(max_terms)]
+    return ", ".join(terms)
+
 
 def derive_filename_from_llm(
     ocr_text: str,

@@ -20,22 +20,9 @@ from gui.frames.output_frame import OutputFrame
 from gui.frames.progress_frame import ProgressFrame
 from gui.frames.settings_frame import SettingsWindow
 from gui.options_panel import OptionsPanel
+from gui.pipeline_event_handler import PipelineEventHandler
 from gui.toast import ToastStack
-from pipeline.events import (
-    BatchCompleteEvent,
-    ErrorEvent,
-    ExtractionCompleteEvent,
-    ExtractionProgressEvent,
-    ExtractionStartEvent,
-    FileRenamedEvent,
-    LogEvent,
-    OCRProgressEvent,
-    OutputWrittenEvent,
-    PageNativeTextEvent,
-    PageSkippedEvent,
-    PipelineCompleteEvent,
-    PipelineEvent,
-)
+from pipeline.events import PipelineEvent
 from pipeline.worker import PipelineWorker
 from version import VERSION
 
@@ -197,6 +184,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._toast_reposition_pending = False
         self.bind("<Configure>", lambda _e: self._schedule_toast_reposition())
 
+        self._event_handler = PipelineEventHandler(self)
+
     def _schedule_toast_reposition(self):
         if self._toast_reposition_pending:
             return
@@ -313,139 +302,18 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         while not self.gui_queue.empty():
             try:
                 event = self.gui_queue.get_nowait()
-                self._handle_event(event)
+                self._event_handler.handle(event)
                 has_events = True
             except queue.Empty:
                 break
         delay = 100 if has_events else 500
         self.after(delay, self._start_queue_polling)
 
-    def _handle_event(self, event: PipelineEvent) -> None:
-        if isinstance(event, OCRProgressEvent):
-            if event.page_num == 0:
-                self._current_ocr_cost = event.page_cost
-            else:
-                self._current_ocr_cost += event.page_cost
-            self._update_total_cost()
-
-        elif isinstance(event, (ExtractionStartEvent, ExtractionProgressEvent,
-                                ExtractionCompleteEvent)):
-            pass  # no UI update needed
-
-        elif isinstance(event, PageNativeTextEvent):
-            self.log_frame.append(
-                f"Pag. {event.page_num + 1}/{event.total_pages}: "
-                f"testo nativo ({event.char_count:,} car.) — OCR saltato",
-                "INFO",
-            )
-
-        elif isinstance(event, PageSkippedEvent):
-            msg = (f"Pagina {event.page_num + 1}/{event.total_pages} senza testo. "
-                   f"Motivo: {event.reason}")
-            self.log_frame.append(msg, "WARNING")
-            self._show_toast(
-                key=f"skip-{event.page_num}",
-                title="Pagina senza testo", message=msg, level="warning",
-            )
-
-        elif isinstance(event, OutputWrittenEvent):
-            if event.file_paths:
-                self.output_frame.set_output_dir(event.file_paths[0].parent)
-                for fp in event.file_paths:
-                    try:
-                        if fp.suffix == ".md":
-                            if self.input_frame.get_selected_path() is None:
-                                self.output_frame.show_markdown_file(fp)
-                        elif fp.suffix == ".json":
-                            content = fp.read_text(encoding="utf-8")
-                            self.output_frame.show_json(content)
-                    except OSError:
-                        pass
-
-        elif isinstance(event, PipelineCompleteEvent):
-            file_cost = event.cost_info.get("total", {}).get("cost_usd", 0.0)
-            self._base_cost += file_cost
-            self._current_ocr_cost = 0.0
-            self._batch_done += 1
-
-            self.progress_frame.update_files(self._batch_done, self._batch_total,
-                                             self._base_cost)
-            self._update_total_cost()
-
-            if event.pdf_path:
-                self._cost_per_input[event.pdf_path] = file_cost
-                self.input_frame.set_cost_for_file(event.pdf_path, file_cost)
-                if event.success:
-                    self.input_frame.set_status_for_file(event.pdf_path, "ok")
-                    md_files = [f for f in event.output_files if f.suffix == ".md"]
-                    if md_files:
-                        self._converted_mds[event.pdf_path] = md_files[0]
-                        self.input_frame.set_md_for_file(event.pdf_path, md_files[0])
-                        if self.input_frame.get_selected_path() == event.pdf_path:
-                            self.output_frame.show_markdown_file(md_files[0])
-                else:
-                    self.input_frame.set_status_for_file(event.pdf_path, "err")
-            self._refresh_cost_chart()
-
-        elif isinstance(event, BatchCompleteEvent):
-            self._on_batch_complete(event)
-
-        elif isinstance(event, FileRenamedEvent):
-            self.log_frame.append(
-                f"Rinominato ({event.file_type.upper()}): "
-                f"{event.original_path.name} → {event.new_path.name}"
-            )
-            if event.file_type == "md" and event.original_path and event.new_path:
-                for input_path, md_path in list(self._converted_mds.items()):
-                    if md_path == event.original_path:
-                        self._converted_mds[input_path] = event.new_path
-                        self.input_frame.set_md_for_file(input_path, event.new_path)
-                        if self.input_frame.get_selected_path() == input_path:
-                            self.output_frame.show_markdown_file(event.new_path)
-                        break
-            elif event.file_type == "pdf" and event.original_path and event.new_path:
-                md_path = self._converted_mds.pop(event.original_path, None)
-                if md_path:
-                    self._converted_mds[event.new_path] = md_path
-                cost = self._cost_per_input.pop(event.original_path, 0.0)
-                self._cost_per_input[event.new_path] = cost
-                was_selected = self.input_frame.get_selected_path() == event.original_path
-                self.input_frame.replace_path(event.original_path, event.new_path)
-                if md_path:
-                    self.input_frame.set_md_for_file(event.new_path, md_path)
-                    if was_selected:
-                        self.output_frame.show_markdown_file(md_path)
-                if cost:
-                    self.input_frame.set_cost_for_file(event.new_path, cost)
-                self._refresh_cost_chart()
-
-        elif isinstance(event, ErrorEvent):
-            self.log_frame.append(event.error_message, "ERROR")
-            target = getattr(event, "pdf_path", None)
-            if target:
-                self.input_frame.set_status_for_file(target, "err")
-            self._show_toast(
-                key=f"err-{target}" if target else "err-general",
-                title="Errore di elaborazione",
-                message=event.error_message,
-                level="error",
-            )
-
-        elif isinstance(event, LogEvent):
-            self.log_frame.append(event.message, event.level)
-
-    # ─── Cost helpers ────────────────────────────────────────────────────
     def _update_total_cost(self):
-        total = self._base_cost + self._current_ocr_cost
-        self.topbar_cost_lbl.configure(text=f"${total:.4f}")
-        self.progress_frame.update_cost(total)
+        self._event_handler.update_total_cost()
 
     def _refresh_cost_chart(self):
-        rows = []
-        for p, status, _cost in self.input_frame.get_rows():
-            actual = self._cost_per_input.get(p, 0.0)
-            rows.append((p.name, status, actual))
-        self.options_panel.update_cost_rows(rows)
+        self._event_handler.refresh_cost_chart()
 
     # ─── Options + processing ───────────────────────────────────────────
     def _on_options_change(self):
@@ -618,38 +486,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if self.worker:
             self.worker.cancel()
             self.log_frame.append("Interruzione in corso…", "WARNING")
-
-    def _on_batch_complete(self, event: BatchCompleteEvent) -> None:
-        self.input_frame.set_enabled(True)
-        self.options_panel.set_running(False)
-        self.options_panel.set_can_start(bool(self.input_frame.get_file_paths()))
-
-        ok = event.successful
-        fail = event.failed
-        total = event.total_pdfs
-        self.progress_frame.mark_complete(ok, total, self._base_cost, failed=fail)
-        if self._converted_mds:
-            self.output_frame.set_all_mds(list(self._converted_mds.values()))
-
-        if fail == 0:
-            self.log_frame.append(f"Completato — {ok}/{total} documenti elaborati con successo.")
-        else:
-            self.log_frame.append(
-                f"Completato — {ok} riusciti, {fail} errori su {total} documenti.", "WARNING")
-        self._reset_specific_output_mode_after_batch()
-
-    def _reset_specific_output_mode_after_batch(self) -> None:
-        if self.config.output_mode != "cartella":
-            return
-        self.config.output_mode = "accanto"
-        self.options_panel.sync_from_config(self.config)
-        try:
-            save_config(self.config)
-        except OSError:
-            pass
-        self.log_frame.append(
-            "Destinazione output ripristinata: accanto al file originale."
-        )
 
     # ─── Toasts ──────────────────────────────────────────────────────────
     def _show_toast(self, key, title, message, level="error"):

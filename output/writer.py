@@ -1,11 +1,10 @@
 """Writes formatted output files next to the source document (or to a fixed directory)."""
 
-import json
 from pathlib import Path
 
 
 class OutputWriter:
-    """Writes markdown (and optionally JSON) output files for one document."""
+    """Writes markdown output files for one document."""
 
     def __init__(self, output_dir: Path | None = None):
         self._output_dir = output_dir
@@ -19,7 +18,6 @@ class OutputWriter:
         self,
         pdf_path: Path,
         markdown: str | None = None,
-        json_data: dict | None = None,
         output_stem: str | None = None,
     ) -> list[Path]:
         written: list[Path] = []
@@ -31,12 +29,5 @@ class OutputWriter:
             md_path = target / f"{stem}.md"
             md_path.write_text(markdown, encoding="utf-8")
             written.append(md_path)
-
-        if json_data is not None:
-            json_path = target / f"{stem}.json"
-            json_path.write_text(
-                json.dumps(json_data, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
-            written.append(json_path)
 
         return written

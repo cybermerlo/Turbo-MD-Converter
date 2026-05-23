@@ -15,8 +15,8 @@ class AppConfig:
     gemini_api_key: str = ""
     langextract_api_key: str = ""
     output_directory: str = ""
-    ocr_model_id: str = "gemini-3.1-flash-lite"
-    extraction_model_id: str = "gemini-3.1-flash-lite"
+    ocr_model_id: str = DEFAULT_OCR_MODEL
+    extraction_model_id: str = DEFAULT_OCR_MODEL
     ocr_prompt: str = ""
     active_schema: str = "full_legal"
     output_formats: list[str] = field(default_factory=lambda: ["markdown"])
@@ -41,10 +41,18 @@ class AppConfig:
     # "sottocartella" → subfolder next to source (uses output_subfolder_name)
     # "cartella"     → fixed directory (uses output_directory)
     output_mode: str = "accanto"
+    cartella_output_one_shot: bool = True
     custom_schema_prompts: dict = field(default_factory=dict)
     asked_sendto: bool = False
     smart_text_detection: bool = True
     mistral_api_key: str = ""
+
+    def reset_cartella_if_one_shot(self) -> bool:
+        """Revert cartella output mode after a batch when one-shot is enabled."""
+        if self.output_mode != "cartella" or not self.cartella_output_one_shot:
+            return False
+        self.output_mode = "accanto"
+        return True
 
 
 def get_config_dir() -> Path:
@@ -78,7 +86,7 @@ def load_env_keys(project_dir: Path | None = None) -> tuple[str, str, str]:
 def load_config(config_path: Path | None = None,
                 project_dir: Path | None = None) -> AppConfig:
     """Load config from JSON file, then override API keys from .env."""
-    from config.defaults import DEFAULT_OCR_PROMPT
+    from config.defaults import DEFAULT_OCR_MODEL, DEFAULT_OCR_PROMPT, normalize_ocr_model
 
     path = config_path or get_config_path()
     config = AppConfig()

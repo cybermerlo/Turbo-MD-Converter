@@ -323,6 +323,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _sync_options_to_config(self):
         v = self.options_panel.get_values()
+        model_changed = self.config.ocr_model_id != v["model"]
         self.config.run_ocr = v["run_ocr"]
         self.config.run_extraction = v["run_extraction"]
         self.config.email_attachments_separate = bool(v["email_attachments_separate"])
@@ -334,6 +335,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.rename_use_batch_context = bool(v["rename_use_batch_context"])
         self.config.output_mode = v["output_mode"]
         self.config.output_formats = ["markdown"]
+        if model_changed:
+            save_config(self.config)
 
     def _on_files_changed(self, paths: list[Path]) -> None:
         has_files = len(paths) > 0

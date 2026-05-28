@@ -511,9 +511,24 @@ class InputFrame(ctk.CTkFrame):
             row.enable_copy(md_path)
 
     def set_status_for_file(self, input_path: Path, status: str):
+        input_path = Path(input_path)
         row = self._rows.get(input_path)
-        if row:
-            row.set_status(status)
+        if row is None:
+            try:
+                resolved = input_path.resolve()
+            except OSError:
+                resolved = input_path
+            for path, candidate in self._rows.items():
+                try:
+                    if path.resolve() == resolved:
+                        candidate.set_status(status)
+                        return
+                except OSError:
+                    if path == input_path:
+                        candidate.set_status(status)
+                        return
+            return
+        row.set_status(status)
 
     def set_cost_for_file(self, input_path: Path, cost: float):
         row = self._rows.get(input_path)

@@ -37,7 +37,7 @@ class EmailAttachmentsSeparateTests(unittest.TestCase):
             )
             processor = DocumentProcessor(config, events.append)
 
-            success, _cost_info = processor.process_single(
+            success, _cost_info, _batch_doc = processor.process_single(
                 eml_path,
                 threading.Event(),
             )
@@ -66,7 +66,7 @@ class EmailAttachmentsSeparateTests(unittest.TestCase):
             )
             processor = DocumentProcessor(config, events.append)
 
-            success, _cost_info = processor.process_single(
+            success, _cost_info, _batch_doc = processor.process_single(
                 eml_path,
                 threading.Event(),
             )

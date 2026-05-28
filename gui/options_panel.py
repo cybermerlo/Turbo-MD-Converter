@@ -137,6 +137,8 @@ class OptionsPanel(ctk.CTkFrame):
         self.email_attachments_separate_var = ctk.BooleanVar(
             value=bool(getattr(config, "email_attachments_separate", False)))
         self.rename_files_var = ctk.BooleanVar(value=config.rename_files)
+        self.final_error_check_var = ctk.BooleanVar(
+            value=bool(getattr(config, "final_error_check", True)))
         self.rename_batch_context_var = ctk.BooleanVar(
             value=bool(getattr(config, "rename_use_batch_context", False)))
         self.model_var = ctk.StringVar(
@@ -199,9 +201,18 @@ class OptionsPanel(ctk.CTkFrame):
                                  sublabel="Suggerimenti di nome dall'AI")
         rename_row.grid(row=5, column=0, sticky="ew", padx=14, pady=(4, 4))
 
+        final_check_row = _toggle_row(
+            ops,
+            "Check finale errori OCR (LLM)",
+            self.final_error_check_var,
+            on_change=self._fire_change,
+            sublabel="Verifica i file convertiti con il modello LLM",
+        )
+        final_check_row.grid(row=6, column=0, sticky="ew", padx=14, pady=(4, 4))
+
         # Rename mode + batch context
         self.rename_extra = ctk.CTkFrame(ops, fg_color="transparent")
-        self.rename_extra.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 6))
+        self.rename_extra.grid(row=7, column=0, sticky="ew", padx=14, pady=(0, 6))
 
         mode_wrap = ctk.CTkFrame(self.rename_extra, fg_color="transparent")
         mode_wrap.pack(fill="x")
@@ -346,6 +357,7 @@ class OptionsPanel(ctk.CTkFrame):
             "run_extraction": self.run_extraction_var.get(),
             "email_attachments_separate": self.email_attachments_separate_var.get(),
             "rename_files": self.rename_files_var.get(),
+            "final_error_check": self.final_error_check_var.get(),
             "rename_use_batch_context": self.rename_batch_context_var.get(),
             "model": self.model_var.get(),
             "schema": self.schema_var.get(),
@@ -372,6 +384,8 @@ class OptionsPanel(ctk.CTkFrame):
         self.email_attachments_separate_var.set(
             bool(getattr(config, "email_attachments_separate", False)))
         self.rename_files_var.set(config.rename_files)
+        self.final_error_check_var.set(
+            bool(getattr(config, "final_error_check", True)))
         self.rename_batch_context_var.set(
             bool(getattr(config, "rename_use_batch_context", False)))
         self.model_var.set(normalize_ocr_model(config.ocr_model_id))
@@ -396,7 +410,8 @@ class OptionsPanel(ctk.CTkFrame):
         ocr_on = self.run_ocr_var.get()
         ext_on = self.run_extraction_var.get()
         rename_on = self.rename_files_var.get()
-        any_ai = ocr_on or ext_on or rename_on
+        final_check_on = self.final_error_check_var.get()
+        any_ai = ocr_on or ext_on or rename_on or final_check_on
 
         self.model_menu.configure(state="normal" if any_ai else "disabled")
         self.schema_menu.configure(state="normal" if ext_on else "disabled")

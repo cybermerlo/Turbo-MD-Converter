@@ -77,6 +77,8 @@ class BatchCompleteEvent(PipelineEvent):
     successful: int = 0
     failed: int = 0
     total_cost: dict = field(default_factory=dict)
+    final_check_failed: bool = False
+    final_check_issue_count: int = 0
 
 
 @dataclass
@@ -101,6 +103,19 @@ class PageNativeTextEvent(PipelineEvent):
     total_pages: int = 0
     char_count: int = 0
     reason: str = ""
+
+
+@dataclass
+class FinalCheckCompleteEvent(PipelineEvent):
+    """Emitted after the post-batch LLM quality check."""
+    passed: bool = True
+    issues: list[dict] = field(default_factory=list)
+    error_message: str = ""
+    affected_pdf_paths: list[Path] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    check_failed_technically: bool = False
 
 
 @dataclass

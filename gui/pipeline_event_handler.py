@@ -12,6 +12,7 @@ from pipeline.events import (
     ExtractionProgressEvent,
     ExtractionStartEvent,
     FileRenamedEvent,
+    FinalCheckCompleteEvent,
     LogEvent,
     OCRProgressEvent,
     OutputWrittenEvent,
@@ -45,6 +46,8 @@ class PipelineEventHandler:
             self._on_output_written(event)
         elif isinstance(event, PipelineCompleteEvent):
             self._on_pipeline_complete(event)
+        elif isinstance(event, FinalCheckCompleteEvent):
+            self._on_final_check_complete(event)
         elif isinstance(event, BatchCompleteEvent):
             self.on_batch_complete(event)
         elif isinstance(event, FileRenamedEvent):
@@ -75,11 +78,25 @@ class PipelineEventHandler:
         ok = event.successful
         fail = event.failed
         total = event.total_pdfs
-        app.progress_frame.mark_complete(ok, total, app._base_cost, failed=fail)
+        app.progress_frame.mark_complete(
+            ok,
+            total,
+            app._base_cost,
+            failed=fail,
+            final_check_failed=event.final_check_failed,
+            final_check_issue_count=event.final_check_issue_count,
+        )
         if app._converted_mds:
             app.output_frame.set_all_mds(list(app._converted_mds.values()))
 
-        if fail == 0:
+        if fail == 0 and event.final_check_failed:
+            app.log_frame.append(
+                f"Completato — {ok}/{total} documenti convertiti, "
+                f"ma il check finale errori ha rilevato "
+                f"{event.final_check_issue_count} problemi.",
+                "WARNING",
+            )
+        elif fail == 0:
             app.log_frame.append(
                 f"Completato — {ok}/{total} documenti elaborati con successo."
             )
@@ -168,6 +185,23 @@ class PipelineEventHandler:
             else:
                 self.app.input_frame.set_status_for_file(event.pdf_path, "err")
         self.refresh_cost_chart()
+
+    def _on_final_check_complete(self, event: FinalCheckCompleteEvent) -> None:
+        app = self.app
+        if event.check_failed_technically or event.passed:
+            return
+
+        for path in event.affected_pdf_paths:
+            app.input_frame.set_status_for_file(path, "warn")
+
+        self.refresh_cost_chart()
+
+        app._show_toast(
+            key="final-check-failed",
+            title="Check finale errori",
+            message="Possibili problemi OCR rilevati nei file convertiti.",
+            level="warning",
+        )
 
     def _on_file_renamed(self, event: FileRenamedEvent) -> None:
         app = self.app

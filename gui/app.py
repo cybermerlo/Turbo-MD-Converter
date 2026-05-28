@@ -331,6 +331,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.extraction_model_id = v["model"]
         self.config.active_schema = v["schema"]
         self.config.rename_files = v["rename_files"]
+        self.config.final_error_check = bool(v["final_error_check"])
         self.config.rename_mode = v["rename_mode"]
         self.config.rename_use_batch_context = bool(v["rename_use_batch_context"])
         self.config.output_mode = v["output_mode"]

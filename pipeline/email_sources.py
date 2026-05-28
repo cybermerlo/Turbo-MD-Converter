@@ -9,6 +9,15 @@ from pathlib import Path
 from pipeline.models import EmailAttachmentDocument
 
 
+def _html_part_to_text(html: str) -> str:
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(separator="\n", strip=True)
+
+
 def join_email_and_attachments(
     body_text: str,
     attachments: list[EmailAttachmentDocument],
@@ -80,22 +89,39 @@ def extract_eml_parts(
     if parts:
         parts.append("")
 
+    plain_bodies: list[str] = []
+    html_bodies: list[str] = []
     for part in msg.walk():
-        if (
-            part.get_content_type() == "text/plain"
-            and part.get_content_disposition() != "attachment"
-        ):
-            try:
-                body = part.get_content()
-                if body and body.strip():
-                    parts.append(body)
-            except Exception:
-                pass
+        disposition = part.get_content_disposition()
+        has_filename = bool(part.get_filename())
+        if disposition == "attachment" or has_filename:
+            continue
+        try:
+            body = part.get_content()
+        except Exception:
+            continue
+        if not body or not str(body).strip():
+            continue
+        content_type = part.get_content_type()
+        if content_type == "text/plain":
+            plain_bodies.append(str(body))
+        elif content_type == "text/html":
+            html_bodies.append(_html_part_to_text(str(body)))
+
+    bodies = plain_bodies or html_bodies
+    for body in bodies:
+        if body and body.strip():
+            parts.append(body)
 
     att_list: list[tuple[str, bytes]] = []
     for part in msg.walk():
-        if part.get_content_disposition() == "attachment":
-            raw_name = part.get_filename() or f"allegato_{len(att_list) + 1}"
+        if part.is_multipart():
+            continue
+        disposition = part.get_content_disposition()
+        filename = part.get_filename()
+        is_explicit_attachment = disposition in {"attachment", "inline"} and bool(filename)
+        if is_explicit_attachment:
+            raw_name = filename or f"allegato_{len(att_list) + 1}"
             payload = part.get_payload(decode=True)
             if payload:
                 att_list.append((raw_name, payload))

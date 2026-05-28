@@ -157,12 +157,14 @@ class RenameCoordinator:
                     else ""
                 ),
             )
-            self.rename_files(
+            renamed_pdf, renamed_outputs = self.rename_files(
                 pdf_path=pdf_path,
                 output_files=output_files,
                 rename_result=rename_result,
                 rename_history=rename_history,
             )
+            item["pdf_path"] = renamed_pdf
+            item["output_files"] = renamed_outputs
 
     def derive_immediate_rename(
         self,

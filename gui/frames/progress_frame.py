@@ -70,15 +70,37 @@ class ProgressFrame(ctk.CTkFrame):
         # Cost is shown in the right-rail cost chart and topbar; nothing here.
         pass
 
-    def mark_complete(self, done: int, total: int, _cost_usd: float, failed: int = 0):
+    def mark_complete(
+        self,
+        done: int,
+        total: int,
+        _cost_usd: float,
+        failed: int = 0,
+        final_check_failed: bool = False,
+        final_check_issue_count: int = 0,
+    ):
         self._bar.set(1.0)
-        if failed == 0:
+        if failed == 0 and not final_check_failed:
             self._bar.configure(progress_color=theme.OK)
             self._count.configure(text=f"{done} / {total}", text_color=theme.OK)
             doc = "documento elaborato" if done == 1 else "documenti elaborati"
             self._state.configure(
                 text=f"✓ Completato — tutti i {done} {doc} con successo",
                 text_color=theme.OK,
+            )
+        elif failed == 0 and final_check_failed:
+            self._bar.configure(progress_color=theme.WARN)
+            self._count.configure(text=f"{done} / {total}", text_color=theme.WARN)
+            avvisi = (
+                f"{final_check_issue_count} avvis"
+                f"{'o' if final_check_issue_count == 1 else 'i'}"
+            )
+            self._state.configure(
+                text=(
+                    f"⚠ Completato — check finale errori non superato "
+                    f"({avvisi})"
+                ),
+                text_color=theme.WARN,
             )
         else:
             self._bar.configure(progress_color=theme.ERR)

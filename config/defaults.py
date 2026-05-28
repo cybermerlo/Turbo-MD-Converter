@@ -90,6 +90,45 @@ def normalize_ocr_model(model_id: str) -> str:
         return model_id
     return DEFAULT_OCR_MODEL
 
+DEFAULT_FINAL_CHECK_PROMPT = """\
+Sei un revisore di qualità per output OCR/testo estratto da documenti.
+Analizza i file Markdown convertiti qui sotto e verifica se contengono errori \
+o segnali di conversione fallita.
+
+Cerca in particolare:
+- Messaggi di errore API o quota (es. "API key invalid", "quota exceeded", \
+"you exceeded your current quota", "RECITATION", "resource exhausted", \
+"permission denied", "billing")
+- Testo troncato o incompleto (frasi interrotte a metà, paragrafi che finiscono \
+improvvisamente, separatori di pagina seguiti da contenuto assente)
+- Placeholder OCR sospetti in massa (molte occorrenze di [illeggibile], blocchi \
+vuoti, pagine senza testo)
+- Encoding corrotto o caratteri illeggibili diffusi
+- Risposte del modello al posto della trascrizione (es. "Mi dispiace", \
+"non posso aiutarti", "I cannot", rifiuti o disclaimer)
+- Incoerenze strutturali gravi (es. un solo documento con metà contenuto \
+manifestamente mancante)
+
+Per ogni problema trovato, indica il nome file interessato (come nell'intestazione \
+--- FILE: ... ---), un tipo breve e una descrizione concisa.
+
+Rispondi SOLO con un oggetto JSON valido:
+{{
+  "passed": true/false,
+  "issues": [
+    {{"file": "nomefile.md", "type": "tipo_breve", "description": "descrizione"}}
+  ]
+}}
+
+Imposta "passed": true SOLO se non trovi problemi significativi.
+Se non ci sono problemi, restituisci "issues": [].
+
+File convertiti:
+---
+{md_documents}
+---
+"""
+
 # Page separator used when combining OCR results
 PAGE_SEPARATOR = "\n\n--- Pagina {page_num} ---\n\n"
 

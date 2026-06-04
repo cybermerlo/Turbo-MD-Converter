@@ -589,12 +589,124 @@ def build_bank_statement_schema() -> SchemaPreset:
     )
 
 
+def build_studi_settore_sp_schema() -> SchemaPreset:
+    """Schema per parcelle studio legale con classificazione ISA."""
+
+    prompt_description = textwrap.dedent("""\
+        Estrai i dati strutturati da parcelle di uno studio legale italiano.
+        Per ogni fattura estrai esattamente una estrazione di classe "parcella".
+        L'extraction_text deve essere il numero parcella cosi' come appare nel testo.
+        Tutti gli altri dati vanno negli attributes.
+        Se la stessa etichetta (es. "Compensi") appare piu' volte con importi positivi
+        e negativi, somma algebricamente e riporta il netto in compensi_netti.
+        Non calcolare nulla tranne questa somma algebrica.
+        Se un campo non e' presente nel testo, ometti l'attributo.
+        Per codice_isa applica le regole di classificazione descritte sotto.
+
+        REGOLE codice_isa:
+        Attivita' giudiziale civile/tributaria di merito (citazione, comparsa, memoria
+        processuale, ricorso, decreto ingiuntivo, appello civile, esecuzione, precetto,
+        opposizione a DI):
+          valore_pratica assente o <= 51700 -> C01
+          valore_pratica tra 51700 e 516500 -> C02
+          valore_pratica > 516500 -> C03
+        Attivita' giudiziale amministrativa di merito -> C04
+        Attivita' giudiziale penale di merito -> C05
+        Giudizi in Cassazione o Consiglio di Stato civile/tributario/amministrativo -> C06
+        Giudizi in Cassazione materia penale -> C07
+        Attivita' stragiudiziale/consulenza (consulenza, parere, assistenza contrattuale,
+        recupero credito, trattativa, scritti difensivi a enti amministrativi non in
+        giudizio):
+          valore_pratica assente o <= 5200 -> C08
+          valore_pratica tra 5200 e 51700 -> C09
+          valore_pratica > 51700 -> C10
+        Diffida come unica prestazione fatturata -> C16
+        Domiciliazione -> C18
+        Se incerto, preponi "?" al codice (es. "?C08").""")
+
+    examples = [
+        lx.data.ExampleData(
+            text=(
+                "Parcella n. 301/2021/EL del 12/7/2021 ... "
+                "Consulenza contrattuale Valore: EUR 6.000,00 "
+                "Compensi 600,00 Rimborso spese generali (15% di 600,00) 90,00 ..."
+            ),
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="parcella",
+                    extraction_text="301/2021/EL",
+                    attributes={
+                        "data": "2021-07-12",
+                        "descrizione_prestazione": "Consulenza contrattuale",
+                        "valore_pratica": "6000.00",
+                        "compensi_netti": "600.00",
+                        "rimborso_spese_generali": "90.00",
+                        "codice_isa": "C09",
+                    },
+                )
+            ],
+        ),
+        lx.data.ExampleData(
+            text=(
+                "Parcella n. 290/2021/EL del 7/7/2021 ... "
+                "Citazione Giudice di Pace di Bolzano Valore: EUR 961,96 "
+                "Compensi 195,00 Spese 15,00 Anticipazioni 10,20 "
+                "Rimborso spese generali (15% di 195,00) 29,25 ..."
+            ),
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="parcella",
+                    extraction_text="290/2021/EL",
+                    attributes={
+                        "data": "2021-07-07",
+                        "descrizione_prestazione": "Citazione Giudice di Pace di Bolzano",
+                        "valore_pratica": "961.96",
+                        "compensi_netti": "195.00",
+                        "rimborso_spese_generali": "29.25",
+                        "codice_isa": "C01",
+                    },
+                )
+            ],
+        ),
+        lx.data.ExampleData(
+            text=(
+                "Parcella n. 273/2025/EL del 9/10/2025 ... "
+                "Recupero del credito Valore: EUR 3.660,00 "
+                "Compensi 1.222,00 ... Compensi -575,00 "
+                "Rimborso spese generali (15% di 1.222,00) 183,30 ..."
+            ),
+            extractions=[
+                lx.data.Extraction(
+                    extraction_class="parcella",
+                    extraction_text="273/2025/EL",
+                    attributes={
+                        "data": "2025-10-09",
+                        "descrizione_prestazione": "Recupero del credito",
+                        "valore_pratica": "3660.00",
+                        "compensi_netti": "647.00",
+                        "rimborso_spese_generali": "183.30",
+                        "codice_isa": "?C08",
+                    },
+                )
+            ],
+        ),
+    ]
+
+    return SchemaPreset(
+        name="studi_settore_sp",
+        description="Schema parcelle studio legale con codice ISA",
+        prompt_description=prompt_description,
+        examples=examples,
+    )
+
+
 # Registry of available schema presets
 _SCHEMA_REGISTRY: dict[str, callable] = {
     "full_legal": build_full_legal_schema,
     "parties_dates": build_parties_dates_schema,
     "invoice": build_invoice_schema,
     "estratto_conto": build_bank_statement_schema,
+    "studi_settore_sp": build_studi_settore_sp_schema,
 }
 
 

@@ -147,6 +147,9 @@ class OptionsPanel(ctk.CTkFrame):
         self.rename_mode_var = ctk.StringVar(
             value=_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
         self.output_mode_var = ctk.StringVar(value=config.output_mode)
+        output_formats = getattr(config, "output_formats", ["markdown"])
+        self.output_markdown_var = ctk.BooleanVar(value="markdown" in output_formats)
+        self.output_json_var = ctk.BooleanVar(value="json" in output_formats)
 
         # ── Operations card ───────────────────────────────────────────────
         ops = ctk.CTkFrame(scroll, fg_color=theme.CARD, corner_radius=8,
@@ -319,6 +322,39 @@ class OptionsPanel(ctk.CTkFrame):
             command=self._pick_output_folder, width=70, height=24,
         ).grid(row=0, column=1, sticky="e")
 
+        formats_row = ctk.CTkFrame(out_card, fg_color="transparent")
+        formats_row.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 12))
+        ctk.CTkLabel(
+            formats_row, text="Formati output",
+            font=theme.font(10), text_color=theme.INK_3,
+        ).pack(side="left", padx=(0, 8))
+        self.output_md_cb = ctk.CTkCheckBox(
+            formats_row,
+            text="Markdown (.md)",
+            variable=self.output_markdown_var,
+            command=self._on_output_format_changed,
+            checkbox_height=16, checkbox_width=16,
+            corner_radius=3,
+            border_width=1, border_color=theme.RULE_STRONG,
+            fg_color=theme.AMBER, hover_color=theme.AMBER_DEEP,
+            text_color=theme.INK_2,
+            font=theme.font(11),
+        )
+        self.output_md_cb.pack(side="left", padx=(0, 12))
+        self.output_json_cb = ctk.CTkCheckBox(
+            formats_row,
+            text="JSON (.json)",
+            variable=self.output_json_var,
+            command=self._on_output_format_changed,
+            checkbox_height=16, checkbox_width=16,
+            corner_radius=3,
+            border_width=1, border_color=theme.RULE_STRONG,
+            fg_color=theme.AMBER, hover_color=theme.AMBER_DEEP,
+            text_color=theme.INK_2,
+            font=theme.font(11),
+        )
+        self.output_json_cb.pack(side="left")
+
         # ── Cost chart ────────────────────────────────────────────────────
         self.cost_chart = CostChart(scroll)
         self.cost_chart.grid(row=3, column=0, sticky="ew", padx=4, pady=(0, 16))
@@ -363,6 +399,7 @@ class OptionsPanel(ctk.CTkFrame):
             "schema": self.schema_var.get(),
             "rename_mode": _RENAME_LABEL_TO_MODE.get(self.rename_mode_var.get(), "both"),
             "output_mode": self.output_mode_var.get(),
+            "output_formats": self._get_output_formats(),
         }
 
     def set_running(self, running: bool):
@@ -392,6 +429,9 @@ class OptionsPanel(ctk.CTkFrame):
         self.schema_var.set(config.active_schema)
         self.rename_mode_var.set(_RENAME_MODE_LABELS.get(config.rename_mode, "Entrambi"))
         self.output_mode_var.set(config.output_mode)
+        output_formats = getattr(config, "output_formats", ["markdown"])
+        self.output_markdown_var.set("markdown" in output_formats)
+        self.output_json_var.set("json" in output_formats)
         self._cartella_label.configure(text=self._short_dir_label(config.output_directory))
         self._on_output_mode_changed()
         self._refresh_states()
@@ -432,6 +472,19 @@ class OptionsPanel(ctk.CTkFrame):
             self.config.output_directory = folder
             self._cartella_label.configure(text=self._short_dir_label(folder))
             self._fire_change()
+
+    def _on_output_format_changed(self):
+        if not self.output_markdown_var.get() and not self.output_json_var.get():
+            self.output_markdown_var.set(True)
+        self._fire_change()
+
+    def _get_output_formats(self) -> list[str]:
+        formats: list[str] = []
+        if self.output_markdown_var.get():
+            formats.append("markdown")
+        if self.output_json_var.get():
+            formats.append("json")
+        return formats or ["markdown"]
 
     @staticmethod
     def _short_dir_label(path: str, maxlen: int = 38) -> str:

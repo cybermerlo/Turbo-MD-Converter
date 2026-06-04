@@ -132,10 +132,11 @@ class LegalExtractor:
         try:
             lx_progress.create_extraction_progress_bar = _patched_progress_bar
 
+            examples = self._get_examples_or_fallback(self.schema.examples)
             result = lx.extract(
                 text_or_documents=text,
                 prompt_description=self.schema.prompt_description,
-                examples=self.schema.examples,
+                examples=examples,
                 model_id=self.config.extraction_model_id,
                 api_key=self.config.langextract_api_key,
                 extraction_passes=passes,
@@ -166,6 +167,39 @@ class LegalExtractor:
             )
 
         return result
+
+    @staticmethod
+    def _get_examples_or_fallback(
+        examples: list[lx.data.ExampleData] | None,
+    ) -> list[lx.data.ExampleData]:
+        """Ensure LangExtract always receives at least one ExampleData object."""
+        if examples:
+            return examples
+
+        logger.warning(
+            "Schema senza esempi: applico un ExampleData di fallback per "
+            "compatibilita' con LangExtract."
+        )
+        return [
+            lx.data.ExampleData(
+                text=(
+                    "Fattura n. 1 del 10/01/2025. "
+                    "Totale documento: Euro 122,00."
+                ),
+                extractions=[
+                    lx.data.Extraction(
+                        extraction_class="numero_documento",
+                        extraction_text="1",
+                        attributes={"tipo": "fattura"},
+                    ),
+                    lx.data.Extraction(
+                        extraction_class="totale_documento",
+                        extraction_text="Euro 122,00",
+                        attributes={"valuta": "EUR"},
+                    ),
+                ],
+            )
+        ]
 
     @staticmethod
     def _deduplicate(result: lx.data.AnnotatedDocument) -> lx.data.AnnotatedDocument:

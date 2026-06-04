@@ -11,6 +11,7 @@ from extraction.extractor import LegalExtractor
 from extraction.schemas import get_schema_preset
 from ocr.audio_transcriber import AudioTranscriber, AudioTranscriberError
 from ocr.ocr_pipeline import OCRPipeline, OCRResult
+from output.json_formatter import JsonFormatter
 from output.markdown_formatter import MarkdownFormatter
 from output.writer import OutputWriter
 from pipeline.attachment_processor import AttachmentProcessor
@@ -68,6 +69,7 @@ class DocumentProcessor:
             self.extractor.set_progress_callback(self._on_extraction_progress)
 
         self.md_formatter = MarkdownFormatter()
+        self.json_formatter = JsonFormatter()
         self.rename_coordinator = RenameCoordinator(config, self.emit)
         self.attachment_processor = AttachmentProcessor(
             config=config,
@@ -393,16 +395,38 @@ class DocumentProcessor:
         extractions: list[dict],
         email_attachment_docs: list[EmailAttachmentDocument],
     ) -> tuple[list[Path], list[Path], list[Path]]:
-        markdown = self.md_formatter.format(
-            extractions=extractions,
-            source_filename=pdf_path.name,
-            total_pages=ocr_result.total_pages,
-            ocr_text=(
-                ocr_result.combined_text
-                if self.config.include_ocr_text_in_output
-                else None
-            ),
-            cost_info=None,
+        should_write_md = "markdown" in self.config.output_formats
+        should_write_json = "json" in self.config.output_formats
+
+        markdown = (
+            self.md_formatter.format(
+                extractions=extractions,
+                source_filename=pdf_path.name,
+                total_pages=ocr_result.total_pages,
+                ocr_text=(
+                    ocr_result.combined_text
+                    if self.config.include_ocr_text_in_output
+                    else None
+                ),
+                cost_info=None,
+            )
+            if should_write_md
+            else None
+        )
+        json_content = (
+            self.json_formatter.format(
+                extractions=extractions,
+                source_filename=pdf_path.name,
+                total_pages=ocr_result.total_pages,
+                ocr_text=(
+                    ocr_result.combined_text
+                    if self.config.include_ocr_text_in_output
+                    else None
+                ),
+                cost_info=None,
+            )
+            if should_write_json
+            else None
         )
 
         if self.config.output_mode == "sottocartella":
@@ -412,7 +436,11 @@ class DocumentProcessor:
         else:
             writer = self.writer
 
-        primary_output_files = writer.write(pdf_path=pdf_path, markdown=markdown)
+        primary_output_files = writer.write(
+            pdf_path=pdf_path,
+            markdown=markdown,
+            json_content=json_content,
+        )
         output_files = list(primary_output_files)
         attachment_output_files: list[Path] = []
 
@@ -427,10 +455,22 @@ class DocumentProcessor:
                     else None
                 ),
                 cost_info=None,
-            )
+            ) if should_write_md else None
+            attachment_json = self.json_formatter.format(
+                extractions=attachment_doc.extractions,
+                source_filename=attachment_doc.filename,
+                total_pages=1,
+                ocr_text=(
+                    attachment_doc.text
+                    if self.config.include_ocr_text_in_output
+                    else None
+                ),
+                cost_info=None,
+            ) if should_write_json else None
             attachment_output_files.extend(writer.write(
                 pdf_path=pdf_path,
                 markdown=attachment_markdown,
+                json_content=attachment_json,
                 output_stem=attachment_output_stem(pdf_path.stem, attachment_doc),
             ))
         output_files.extend(attachment_output_files)

@@ -110,6 +110,15 @@ def load_config(config_path: Path | None = None,
 
     config.ocr_model_id = normalize_ocr_model(config.ocr_model_id)
     config.extraction_model_id = normalize_ocr_model(config.extraction_model_id)
+    if not config.output_formats:
+        config.output_formats = ["markdown"]
+    else:
+        normalized: list[str] = []
+        for fmt in config.output_formats:
+            value = str(fmt).strip().lower()
+            if value in ("markdown", "json") and value not in normalized:
+                normalized.append(value)
+        config.output_formats = normalized or ["markdown"]
 
     # Override API keys from environment
     gemini_key, langextract_key, mistral_key = load_env_keys(project_dir)

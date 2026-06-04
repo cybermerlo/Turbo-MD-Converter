@@ -335,7 +335,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.config.rename_mode = v["rename_mode"]
         self.config.rename_use_batch_context = bool(v["rename_use_batch_context"])
         self.config.output_mode = v["output_mode"]
-        self.config.output_formats = ["markdown"]
+        self.config.output_formats = v["output_formats"]
         if model_changed:
             save_config(self.config)
 

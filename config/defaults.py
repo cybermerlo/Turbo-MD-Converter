@@ -161,4 +161,11 @@ PRICING = {
 }
 
 # Available schema preset names
-SCHEMA_PRESET_NAMES = ["full_legal", "parties_dates", "invoice", "estratto_conto", "custom"]
+SCHEMA_PRESET_NAMES = [
+    "full_legal",
+    "parties_dates",
+    "invoice",
+    "estratto_conto",
+    "studi_settore_sp",
+    "custom",
+]

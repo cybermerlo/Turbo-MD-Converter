@@ -108,6 +108,33 @@ def _clipboard_file_paths_win32() -> list[Path]:
         user32.CloseClipboard()
 
 
+def _clipboard_image():
+    """Return a PIL Image from clipboard, or None if no image is available."""
+    try:
+        from PIL import ImageGrab, Image
+        result = ImageGrab.grabclipboard()
+        if isinstance(result, Image.Image):
+            return result
+    except Exception:
+        pass
+
+    if sys.platform == "linux":
+        for cmd in (
+            ["xclip", "-selection", "clipboard", "-target", "image/png", "-o"],
+            ["wl-paste", "--type", "image/png"],
+        ):
+            try:
+                import io
+                from PIL import Image
+                r = subprocess.run(cmd, capture_output=True, timeout=3)
+                if r.returncode == 0 and r.stdout:
+                    return Image.open(io.BytesIO(r.stdout))
+            except Exception:
+                continue
+
+    return None
+
+
 def _paths_from_clipboard_text(text: str) -> list[Path]:
     lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
@@ -448,7 +475,27 @@ class InputFrame(ctk.CTkFrame):
                 self.select_path(self._file_paths[-1])
             return True
 
+        img = _clipboard_image()
+        if img is not None:
+            return self._paste_image(img)
+
         return self._paste_text(text)
+
+    def _paste_image(self, img) -> bool:
+        try:
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            tdir = Path(tempfile.gettempdir()) / "OCR_LangExtract"
+            tdir.mkdir(exist_ok=True, parents=True)
+            tfile = tdir / f"Appunti_{ts}.png"
+            img.save(str(tfile), "PNG")
+            if tfile not in self._file_paths:
+                self._file_paths.append(tfile)
+                self._clipboard_paths.add(tfile)
+            self._refresh_list()
+            self.select_path(tfile)
+            return True
+        except Exception:
+            return False
 
     def _paste_text(self, text: str | None = None) -> bool:
         try:

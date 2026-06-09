@@ -61,12 +61,15 @@ class DocumentProcessor:
             if config.mistral_api_key else None
         )
 
-        schema = get_schema_preset(config.active_schema)
-        if schema and config.custom_schema_prompts.get(config.active_schema):
-            schema.prompt_description = config.custom_schema_prompts[config.active_schema]
-        self.extractor = LegalExtractor(config, schema, self.cost_tracker) if schema else None
-        if self.extractor:
-            self.extractor.set_progress_callback(self._on_extraction_progress)
+        if config.run_extraction:
+            schema = get_schema_preset(config.active_schema)
+            if schema and config.custom_schema_prompts.get(config.active_schema):
+                schema.prompt_description = config.custom_schema_prompts[config.active_schema]
+            self.extractor = LegalExtractor(config, schema, self.cost_tracker) if schema else None
+            if self.extractor:
+                self.extractor.set_progress_callback(self._on_extraction_progress)
+        else:
+            self.extractor = None
 
         self.md_formatter = MarkdownFormatter()
         self.json_formatter = JsonFormatter()

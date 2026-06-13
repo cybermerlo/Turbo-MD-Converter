@@ -81,6 +81,7 @@ class DocumentProcessor:
             on_page_complete=self._on_ocr_page,
             on_page_skipped=self._on_page_skipped,
             on_page_native_text=self._on_page_native_text,
+            audio_transcriber=self.audio_transcriber,
         )
 
         if config.output_mode == "cartella" and config.output_directory:
@@ -432,7 +433,13 @@ class DocumentProcessor:
             else None
         )
 
-        if self.config.output_mode == "sottocartella":
+        # Un .wachat (conversazione WhatsApp) è un intermedio in cartella temporanea
+        # nascosta: l'MD non va scritto "accanto" lì, ma nella cartella visibile.
+        is_wachat = pdf_path.suffix.lower() == ".wachat"
+        if is_wachat and self.config.output_mode != "cartella":
+            from gui.resources import app_capture_dir
+            writer = OutputWriter(app_capture_dir())
+        elif self.config.output_mode == "sottocartella":
             per_file_dir = pdf_path.parent / self.config.output_subfolder_name
             per_file_dir.mkdir(parents=True, exist_ok=True)
             writer = OutputWriter(per_file_dir)

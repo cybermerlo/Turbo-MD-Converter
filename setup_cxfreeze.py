@@ -18,6 +18,16 @@ sys.setrecursionlimit(5000)
 PROJECT_ROOT = Path(__file__).parent
 ICON_PATH    = PROJECT_ROOT / "logo.ico"
 
+# adb (Android Platform Tools) impacchettato per l'importazione WhatsApp.
+# Posiziona adb.exe + le due DLL in vendor/adb/. Se assenti, l'app cercherà adb
+# nel percorso configurato o nel PATH di sistema a runtime.
+ADB_DIR = PROJECT_ROOT / "vendor" / "adb"
+adb_include_files = [
+    (str(ADB_DIR / name), f"adb/{name}")
+    for name in ("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+    if (ADB_DIR / name).exists()
+]
+
 # ── Pacchetti con import dinamici che cx_Freeze non traccia da solo ──────────
 build_exe_options = {
     "packages": [
@@ -34,6 +44,11 @@ build_exe_options = {
         "dotenv",
         "tkinterdnd2",
         "mistralai",
+        # WhatsApp import: decifratura backup + dipendenze crittografiche
+        "wa_crypt_tools",
+        "Cryptodome",
+        "google.protobuf",
+        "sqlite3",
         # moduli dell'app
         "config",
         "gui",
@@ -42,6 +57,7 @@ build_exe_options = {
         "pipeline",
         "output",
         "utils",
+        "whatsapp",
     ],
     # Include esplicito per import dinamico usato da opentelemetry context loader.
     "includes": [
@@ -51,7 +67,7 @@ build_exe_options = {
         # Icone / loghi
         (str(ICON_PATH), "logo.ico"),
         (str(PROJECT_ROOT / "logo.png"), "logo.png"),
-    ],
+    ] + adb_include_files,
     "excludes": [
         "test", "unittest", "email.test",
         "tkinter.test",

@@ -26,3 +26,20 @@ def resource_path(name: str) -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def app_capture_dir() -> Path:
+    """Cartella visibile per input/output 'sintetici' (appunti, WhatsApp).
+
+    Questi input non hanno una cartella sorgente naturale: con output mode
+    "accanto" finirebbero in %TEMP%. Li raccogliamo in una sottocartella di
+    Download (o Documenti, o Home) così l'utente li ritrova facilmente.
+    """
+    base = Path.home() / "Downloads"
+    if not base.exists():
+        base = Path.home() / "Documents"
+    if not base.exists():
+        base = Path.home()
+    out = base / "Turbo MD Converter"
+    out.mkdir(parents=True, exist_ok=True)
+    return out

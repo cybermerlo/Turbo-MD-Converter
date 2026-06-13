@@ -6,9 +6,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.settings import AppConfig
+from ocr.audio_transcriber import AudioTranscriber
 from ocr.ocr_pipeline import OCRPipeline, OCRResult
 from pipeline.archive_sources import extract_archive_text, is_archive_path
-from pipeline.constants import ARCHIVE_EXTENSIONS, IMAGE_EXTENSIONS
+from pipeline.constants import (
+    ARCHIVE_EXTENSIONS,
+    AUDIO_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+)
 from pipeline.email_sources import (
     extract_eml_parts,
     extract_msg_parts,
@@ -33,6 +38,7 @@ class AttachmentProcessor:
         on_page_complete: Callable,
         on_page_skipped: Callable,
         on_page_native_text: Callable,
+        audio_transcriber: AudioTranscriber | None = None,
     ):
         self.config = config
         self.ocr_pipeline = ocr_pipeline
@@ -40,6 +46,7 @@ class AttachmentProcessor:
         self._on_page_complete = on_page_complete
         self._on_page_skipped = on_page_skipped
         self._on_page_native_text = on_page_native_text
+        self.audio_transcriber = audio_transcriber
 
     def to_text(
         self,
@@ -65,6 +72,15 @@ class AttachmentProcessor:
                     cancel_event=_cancel,
                 )
                 return result.combined_text
+            if suffix in AUDIO_EXTENSIONS:
+                if not self.audio_transcriber:
+                    self.emit_log(
+                        f"Audio '{att_path.name}' saltato: "
+                        f"chiave API Mistral non configurata",
+                        "WARNING",
+                    )
+                    return ""
+                return self.audio_transcriber.transcribe(att_path)["text"]
             if suffix == ".docx":
                 return extract_docx_text(att_path)
             if suffix in (".html", ".htm"):
@@ -142,6 +158,12 @@ class AttachmentProcessor:
         elif suffix == ".p7m":
             self.emit_log(f"Estrazione firma P7M: {file_path.name}", "INFO")
             text = self._extract_p7m_text(file_path, cancel_event)
+        elif suffix == ".wachat":
+            from pipeline.whatsapp_sources import extract_whatsapp_parts
+            text = extract_whatsapp_parts(
+                file_path, process, self.emit_log, cancel_event,
+            )
+            self.emit_log("Conversazione WhatsApp letta", "INFO")
         elif suffix in ARCHIVE_EXTENSIONS or name_lower.endswith(
             (".tar.gz", ".tar.bz2", ".tar.xz")
         ):

@@ -49,6 +49,9 @@ class AppConfig:
     smart_text_detection: bool = True
     mistral_api_key: str = ""
     final_error_check: bool = True
+    # Importazione WhatsApp (Android via adb + backup locale cifrato).
+    whatsapp_backup_key: str = ""   # 64 cifre esadecimali del backup E2E
+    adb_path: str = ""              # override percorso adb.exe (vuoto = bundle/PATH)
 
     def reset_cartella_if_one_shot(self) -> bool:
         """Revert cartella output mode after a batch when one-shot is enabled."""

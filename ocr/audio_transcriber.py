@@ -1,6 +1,7 @@
 """Audio transcription via Mistral Voxtral Mini Transcribe V2."""
 
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -16,6 +17,8 @@ AUDIO_MIME_TYPES: dict[str, str] = {
     ".m4a":  "audio/mp4",
     ".ogg":  "audio/ogg",
     ".mp4":  "audio/mp4",
+    # Le note vocali WhatsApp sono Opus in container Ogg.
+    ".opus": "audio/ogg",
 }
 
 
@@ -61,6 +64,24 @@ def _is_rate_limit(exc: Exception) -> bool:
         return True
     msg = str(exc).lower()
     return "429" in msg or "rate_limit" in msg or "rate limit" in msg
+
+
+def _is_non_retryable(exc: Exception) -> bool:
+    """True per errori client permanenti (4xx, escluso 429): ritentare è inutile.
+
+    Tipico: un video senza traccia audio decodibile → 400 "could not be decoded".
+    """
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return 400 <= code < 500 and code not in (408, 409, 425, 429)
+    msg = str(exc).lower()
+    if "could not be decoded" in msg or "invalid_request" in msg:
+        return True
+    m = re.search(r"status\s+(\d{3})", msg)
+    if m:
+        c = int(m.group(1))
+        return 400 <= c < 500 and c != 429
+    return False
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
@@ -173,6 +194,12 @@ class AudioTranscriber:
                 raise
             except Exception as e:
                 last_exc = e
+                if _is_non_retryable(e):
+                    logger.warning(
+                        "Trascrizione '%s' non ritentabile (errore client): %s",
+                        audio_path.name, e,
+                    )
+                    break
                 if attempt == max_attempts - 1:
                     break
                 ra = _retry_after_seconds(e)

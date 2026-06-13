@@ -107,6 +107,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self._build_ocr_tab()
         self._build_extraction_tab()
         self._build_output_tab()
+        self._build_whatsapp_tab()
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(padx=15, pady=(0, 12), fill="x")
@@ -396,6 +397,95 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         self._on_rename_user_context_toggle()
 
+    def _build_whatsapp_tab(self) -> None:
+        tab = self.tabview.add("WhatsApp")
+
+        ctk.CTkLabel(tab, text="Chiave di backup (64 cifre esadecimali)").pack(
+            padx=10, pady=(12, 2), anchor="w")
+
+        key_row = ctk.CTkFrame(tab, fg_color="transparent")
+        key_row.pack(padx=10, pady=(0, 4), fill="x")
+
+        self.wa_key_entry = ctk.CTkEntry(key_row, show="*", width=380)
+        self.wa_key_entry.pack(side="left", padx=(0, 8))
+        self.wa_key_entry.insert(0, self.config.whatsapp_backup_key)
+
+        self.show_wa_key_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            key_row, text="Mostra", variable=self.show_wa_key_var,
+            command=self._toggle_wa_key_visibility, width=80,
+        ).pack(side="left")
+
+        _hint(
+            tab,
+            "Chiave del backup cifrato end-to-end di WhatsApp (Impostazioni → Chat "
+            "→ Backup → Backup crittografato end-to-end → «usa chiave a 64 cifre»). "
+            "Serve a decifrare il backup locale e resta solo sul tuo computer.",
+        )
+
+        _section_header(tab, "Dispositivo (adb)")
+        _hint(
+            tab,
+            "Collega il telefono Android via USB con il «Debug USB» attivo "
+            "(Opzioni sviluppatore), poi verifica il collegamento.",
+        )
+
+        verify_row = ctk.CTkFrame(tab, fg_color="transparent")
+        verify_row.pack(padx=10, pady=(0, 2), fill="x")
+        ctk.CTkButton(
+            verify_row, text="Verifica dispositivo", width=170,
+            command=self._verify_adb_device,
+        ).pack(side="left")
+
+        self.wa_status_lbl = ctk.CTkLabel(
+            tab, text="", font=ctk.CTkFont(size=11), text_color="gray55",
+            wraplength=560, justify="left",
+        )
+        self.wa_status_lbl.pack(padx=10, pady=(4, 6), anchor="w")
+
+        ctk.CTkLabel(tab, text="Percorso adb personalizzato (facoltativo)").pack(
+            padx=10, pady=(4, 2), anchor="w")
+        adb_row = ctk.CTkFrame(tab, fg_color="transparent")
+        adb_row.pack(padx=10, pady=(0, 4), fill="x")
+        self.adb_path_entry = ctk.CTkEntry(adb_row, width=380)
+        self.adb_path_entry.pack(side="left", padx=(0, 8))
+        self.adb_path_entry.insert(0, self.config.adb_path)
+        ctk.CTkButton(
+            adb_row, text="Sfoglia…", width=80, command=self._browse_adb_path,
+        ).pack(side="left")
+        _hint(tab, "Lascia vuoto per usare l'adb incluso nell'applicazione.")
+
+    def _toggle_wa_key_visibility(self) -> None:
+        self.wa_key_entry.configure(show="" if self.show_wa_key_var.get() else "*")
+
+    def _browse_adb_path(self) -> None:
+        file = filedialog.askopenfilename(
+            title="Seleziona adb.exe",
+            filetypes=[("adb", "adb.exe adb"), ("Tutti i file", "*.*")],
+        )
+        if file:
+            self.adb_path_entry.delete(0, "end")
+            self.adb_path_entry.insert(0, file)
+
+    def _verify_adb_device(self) -> None:
+        import threading
+
+        self.wa_status_lbl.configure(text="Verifica in corso…", text_color="gray55")
+        adb_path = self.adb_path_entry.get().strip()
+
+        def work():
+            try:
+                from whatsapp.adb_bridge import AdbBridge
+                bridge = AdbBridge(adb_path)
+                device = bridge.require_device()
+                msg, color = f"✓ Dispositivo pronto: {device.serial}", "#2a7d3a"
+            except Exception as e:
+                msg, color = str(e), "#b04a36"
+            self.after(0, lambda: self.wa_status_lbl.configure(
+                text=msg, text_color=color))
+
+        threading.Thread(target=work, daemon=True).start()
+
     # ─── Schema helpers ───────────────────────────────────────────────────────
 
     def _on_schema_changed(self, schema_name: str) -> None:
@@ -490,5 +580,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.rename_user_context_text = self.rename_user_context_text.get(
             "1.0", "end"
         ).strip()
+        self.config.whatsapp_backup_key = self.wa_key_entry.get().strip()
+        self.config.adb_path = self.adb_path_entry.get().strip()
         self.on_save(self.config)
         self.destroy()

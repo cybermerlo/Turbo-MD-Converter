@@ -16,7 +16,10 @@
       "Bash(pip install:*)",
       "Bash(python -m pip install:*)",
       "Bash(Get-ChildItem -Path \"C:\\\\Programmi Locali\\\\Turbo-MD-Converter\" -Recurse -File -Filter \"*.py\")",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Recurse -Force)",
+      "Bash(Select-Object FullName)",
+      "WebSearch"
     ]
   }
 }

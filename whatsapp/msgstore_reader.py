@@ -71,6 +71,12 @@ class MsgStoreReader:
         # se non disponibile: in tal caso si mostra il numero.
         self.contacts = contacts or {}
         self.schema = self._detect_schema()
+        # WhatsApp moderno identifica molti contatti con un "LID" (numero
+        # privacy, es. '182188335227070@lid') anziché col numero di telefono.
+        # La tabella `jid_map` collega il LID al numero reale: la usiamo per
+        # risolvere nome (rubrica) e numero visualizzato. Senza questa mappa i
+        # LID apparirebbero come un numero inesistente e non cercabile.
+        self._lid_to_pn = self._load_lid_map()
 
     # ── Connessione / schema ──────────────────────────────────────────────
     def _connect(self) -> sqlite3.Connection:
@@ -103,6 +109,38 @@ class MsgStoreReader:
         raise MsgStoreReaderError(
             "Schema del database WhatsApp non riconosciuto."
         )
+
+    def _load_lid_map(self) -> dict[str, str]:
+        """Costruisce LID → numero reale leggendo `jid_map` (solo schema modern).
+
+        Best-effort: ritorna {} se la tabella manca (backup più vecchi) o se la
+        query fallisce. Filtra alle sole coppie '…@lid' → '…@s.whatsapp.net'.
+        """
+        if self.schema != "modern":
+            return {}
+        with closing(self._connect()) as con:
+            if "jid_map" not in self._tables(con):
+                return {}
+            try:
+                rows = con.execute(
+                    """
+                    SELECT lj.raw_string AS lid, pj.raw_string AS pn
+                    FROM jid_map jm
+                    JOIN jid lj ON lj._id = jm.lid_row_id
+                    JOIN jid pj ON pj._id = jm.jid_row_id
+                    WHERE lj.raw_string LIKE '%@lid'
+                      AND pj.raw_string LIKE '%@s.whatsapp.net'
+                    """
+                ).fetchall()
+            except sqlite3.Error:
+                return {}
+        return {r["lid"]: r["pn"] for r in rows if r["lid"] and r["pn"]}
+
+    def _resolve_jid(self, jid: str | None) -> str | None:
+        """Traduce un jid '…@lid' nel corrispondente numero reale, se noto."""
+        if jid and jid.endswith("@lid"):
+            return self._lid_to_pn.get(jid, jid)
+        return jid
 
     # ── API pubblica ──────────────────────────────────────────────────────
     def list_chats(self) -> list[ChatSummary]:
@@ -221,14 +259,17 @@ class MsgStoreReader:
             jid = r["jid"] or ""
             is_group = _is_group_jid(jid)
             subject = r["subject"]
+            # Per i 1:1 traduci eventuali LID nel numero reale prima di cercare
+            # in rubrica: così risolviamo nome e numero anche per i "numeri privacy".
+            display_jid = self._resolve_jid(jid)
             if is_group:
                 name = subject or _format_jid(jid)
             else:
-                name = self._contact_name(jid) or _format_jid(jid)
+                name = self._contact_name(display_jid) or _format_jid(display_jid)
             out.append(ChatSummary(
                 selector=r["chat_id"],
                 jid=jid,
-                name=name or _format_jid(jid),
+                name=name or _format_jid(display_jid),
                 is_group=is_group,
                 last_ts=last_ts or 0,
                 count=cnt or 0,
@@ -402,6 +443,7 @@ class MsgStoreReader:
             return "Io"
         if chat.is_group:
             if sender_jid:
-                return self._contact_name(sender_jid) or _format_jid(sender_jid)
+                rj = self._resolve_jid(sender_jid)
+                return self._contact_name(rj) or _format_jid(rj)
             return "Partecipante"
         return chat.name

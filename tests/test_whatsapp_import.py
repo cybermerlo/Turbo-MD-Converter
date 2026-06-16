@@ -271,6 +271,62 @@ class ContactResolutionTests(unittest.TestCase):
             self.assertEqual("Mario Rossi", msgs[0].sender_label)  # entrante
             self.assertEqual("Io", msgs[1].sender_label)           # from_me
 
+    def test_lid_resolved_to_contact_name(self):
+        """Una chat identificata da un LID risolve nome/numero via jid_map."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "msgstore.db"
+            con = sqlite3.connect(str(db))
+            con.executescript(
+                """
+                CREATE TABLE jid (_id INTEGER PRIMARY KEY, raw_string TEXT);
+                CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER, subject TEXT);
+                CREATE TABLE message (
+                    _id INTEGER PRIMARY KEY, chat_row_id INTEGER, from_me INTEGER,
+                    sender_jid_row_id INTEGER, timestamp INTEGER, text_data TEXT
+                );
+                CREATE TABLE jid_map (lid_row_id INTEGER, jid_row_id INTEGER, sort_id INTEGER);
+                """
+            )
+            # jid 1 = LID (identità della chat), jid 2 = numero reale collegato
+            con.execute("INSERT INTO jid VALUES (1, '182188335227070@lid')")
+            con.execute("INSERT INTO jid VALUES (2, '393331234567@s.whatsapp.net')")
+            con.execute("INSERT INTO jid_map VALUES (1, 2, 0)")
+            con.execute("INSERT INTO chat VALUES (10, 1, NULL)")
+            con.execute("INSERT INTO message VALUES (1, 10, 0, 1, 1000, 'Ciao!')")
+            con.commit()
+            con.close()
+
+            reader = MsgStoreReader(db, contacts={"3331234567": "Mario Rossi"})
+            chat = reader.list_chats()[0]
+            # Senza il fix mostrerebbe '+182188335227070' (il LID grezzo).
+            self.assertEqual("Mario Rossi", chat.name)
+
+    def test_lid_without_mapping_falls_back_to_number(self):
+        """LID non presente in jid_map: nessun crash, resta come numero grezzo."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "msgstore.db"
+            con = sqlite3.connect(str(db))
+            con.executescript(
+                """
+                CREATE TABLE jid (_id INTEGER PRIMARY KEY, raw_string TEXT);
+                CREATE TABLE chat (_id INTEGER PRIMARY KEY, jid_row_id INTEGER, subject TEXT);
+                CREATE TABLE message (
+                    _id INTEGER PRIMARY KEY, chat_row_id INTEGER, from_me INTEGER,
+                    sender_jid_row_id INTEGER, timestamp INTEGER, text_data TEXT
+                );
+                CREATE TABLE jid_map (lid_row_id INTEGER, jid_row_id INTEGER, sort_id INTEGER);
+                """
+            )
+            con.execute("INSERT INTO jid VALUES (1, '999888777666555@lid')")
+            con.execute("INSERT INTO chat VALUES (10, 1, NULL)")
+            con.execute("INSERT INTO message VALUES (1, 10, 0, 1, 1000, 'Ciao!')")
+            con.commit()
+            con.close()
+
+            reader = MsgStoreReader(db, contacts={})
+            chat = reader.list_chats()[0]
+            self.assertEqual("+999888777666555", chat.name)
+
 
 class AudioRetryPolicyTests(unittest.TestCase):
     """Gli errori client 4xx (es. video senza audio) non vanno ritentati."""

@@ -77,5 +77,9 @@ Dettagli operativi:
 - `AudioTranscriber`: gli errori client 4xx (es. video senza traccia audio) **non
   vengono ritentati** (fail-fast).
 - `AppConfig`: aggiungere un campo alla dataclass basta (load/save automatici).
-- I partecipanti gruppo con jid **`@lid`** (numeri "privacy" di WhatsApp) non sono
-  abbinabili alla rubrica e restano come numero.
+- WhatsApp moderno identifica molti contatti con un **LID** (`…@lid`, "numero
+  privacy") al posto del numero. `msgstore_reader._resolve_jid()` lo traduce nel
+  numero reale tramite la tabella **`jid_map`** (LID→`…@s.whatsapp.net`) prima di
+  cercare in rubrica — vale sia per le chat 1:1 sia per i mittenti nei gruppi.
+  I LID senza voce in `jid_map` (contatti a privacy totale, mai contattati "a
+  numero") restano non risolvibili e si mostrano come numero grezzo.

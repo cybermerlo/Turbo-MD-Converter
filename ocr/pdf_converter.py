@@ -23,25 +23,6 @@ class PDFConverter:
         doc.close()
         return count
 
-    def convert_page(self, pdf_path: Path, page_num: int) -> bytes:
-        """Converts a single page to JPEG bytes.
-
-        Args:
-            pdf_path: Path to the PDF file.
-            page_num: Zero-based page index.
-
-        Returns:
-            JPEG image bytes.
-        """
-        doc = fitz.open(str(pdf_path))
-        try:
-            page = doc.load_page(page_num)
-            pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
-            img_bytes = pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
-            return img_bytes
-        finally:
-            doc.close()
-
     def iter_pages_raw(self, pdf_path: Path) -> Iterator[tuple[int, "fitz.Page"]]:
         """Yields (page_number, fitz.Page) for every page without rendering.
 
@@ -61,22 +42,3 @@ class PDFConverter:
         """Render an already-loaded fitz.Page to JPEG bytes."""
         pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
         return pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
-
-    def iter_pages(self, pdf_path: Path) -> Iterator[tuple[int, bytes]]:
-        """Yields (page_number, jpeg_bytes) for every page.
-
-        Opens the document once and iterates through all pages
-        for efficiency.
-        """
-        doc = fitz.open(str(pdf_path))
-        try:
-            total = doc.page_count
-            logger.info("PDF '%s': %d pagine da convertire", pdf_path.name, total)
-            for i in range(total):
-                page = doc.load_page(i)
-                pixmap = page.get_pixmap(dpi=self.dpi, alpha=False)
-                img_bytes = pixmap.tobytes(output="jpeg", jpg_quality=self.jpeg_quality)
-                logger.debug("Pagina %d/%d convertita (%d bytes)", i + 1, total, len(img_bytes))
-                yield (i, img_bytes)
-        finally:
-            doc.close()

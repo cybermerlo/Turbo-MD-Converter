@@ -34,6 +34,7 @@ def extract_archive_text(
             with py7zr.SevenZipFile(file_path, mode="r") as zf:
                 for name, bio in zf.read().items():
                     members.append((name, bio.read()))
+                    bio.close()
 
         elif suffix in (".tar", ".tgz") or name_lower.endswith(
             (".tar.gz", ".tar.bz2", ".tar.xz")

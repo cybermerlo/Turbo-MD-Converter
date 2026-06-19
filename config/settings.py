@@ -1,6 +1,7 @@
 """Application configuration management."""
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -8,6 +9,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from config.defaults import DEFAULT_OCR_MODEL
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -104,8 +107,11 @@ def load_config(config_path: Path | None = None,
             for key, value in data.items():
                 if hasattr(config, key):
                     setattr(config, key, value)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(
+                "Config '%s' non leggibile (%s): uso i valori di default.",
+                path, e,
+            )
 
     # Set default OCR prompt if empty
     if not config.ocr_prompt:

@@ -83,7 +83,7 @@ def derive_filename_from_llm(
             model=model_id,
             contents=[types.Part.from_text(text=prompt)],
         )
-        raw = _strip_json_fences(response.text.strip())
+        raw = _strip_json_fences((response.text or "").strip())
 
         data = json.loads(raw)
         date_str = str(data.get("data", "00000000")).strip()
@@ -165,7 +165,7 @@ def derive_batch_profiles_from_llm(
             model=model_id,
             contents=[types.Part.from_text(text=prompt)],
         )
-        raw = _strip_json_fences(response.text.strip())
+        raw = _strip_json_fences((response.text or "").strip())
         data = json.loads(raw)
         docs = data.get("documents")
         if not isinstance(docs, list):

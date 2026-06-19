@@ -55,6 +55,10 @@ def _process_attachment_list(
                 break
             safe_name = Path(name).name or f"allegato_{i}"
             att_path = Path(tmpdir) / safe_name
+            # Due allegati con lo stesso nome (es. più "image001.png" inline)
+            # non devono sovrascriversi: disambigua col prefisso dell'indice.
+            if att_path.exists():
+                att_path = Path(tmpdir) / f"{i}_{safe_name}"
             att_path.write_bytes(data)
             emit_log(
                 f"Elaborazione allegato {i}/{len(att_list)}: {name}",

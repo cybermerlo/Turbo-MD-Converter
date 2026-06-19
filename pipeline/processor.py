@@ -101,7 +101,7 @@ class DocumentProcessor:
         error_message: str,
         *,
         recoverable: bool = False,
-    ) -> tuple[bool, dict]:
+    ) -> tuple[bool, dict, None]:
         self.emit(ErrorEvent(error_message=error_message, recoverable=recoverable))
         cost_info = self.cost_tracker.get_totals()
         self.emit(PipelineCompleteEvent(

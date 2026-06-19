@@ -43,7 +43,7 @@ def run_final_error_check(
             error_message="",
         )
 
-    if not api_key.strip():
+    if not (api_key or "").strip():
         return FinalCheckResult(
             passed=False,
             issues=[],

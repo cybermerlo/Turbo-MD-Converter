@@ -10,7 +10,7 @@ class CallRecord:
     model_id: str
     input_tokens: int
     output_tokens: int
-    phase: str  # "ocr" or "extraction"
+    phase: str  # "ocr", "extraction", "transcription" or "final_check"
 
 
 class CostTracker:
@@ -32,12 +32,9 @@ class CostTracker:
     def get_totals(self) -> dict:
         """Get aggregated totals by phase.
 
-        Returns:
-            {
-                "ocr": {"input_tokens": N, "output_tokens": N, "cost_usd": X},
-                "extraction": {"input_tokens": N, "output_tokens": N, "cost_usd": X},
-                "total": {"input_tokens": N, "output_tokens": N, "cost_usd": X},
-            }
+        Returns a dict with one entry per phase ("ocr", "extraction",
+        "transcription", "final_check") plus an aggregated "total", each in the
+        form {"input_tokens": N, "output_tokens": N, "cost_usd": X}.
         """
         result = {}
         total_in = 0

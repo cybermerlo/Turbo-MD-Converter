@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from config.settings import AppConfig
-from ocr.audio_transcriber import AudioTranscriber
+from ocr.audio_transcriber import AudioNotDecodableError, AudioTranscriber
 from ocr.ocr_pipeline import OCRPipeline, OCRResult
 from pipeline.archive_sources import extract_archive_text, is_archive_path
 from pipeline.constants import (
@@ -80,7 +80,17 @@ class AttachmentProcessor:
                         "WARNING",
                     )
                     return ""
-                return self.audio_transcriber.transcribe(att_path)["text"]
+                try:
+                    return self.audio_transcriber.transcribe(att_path)["text"]
+                except AudioNotDecodableError as e:
+                    # Video/audio senza traccia decodificabile: condizione attesa
+                    # (es. video WhatsApp muto), non un errore di elaborazione.
+                    self.emit_log(
+                        f"Allegato '{att_path.name}' senza audio trascrivibile "
+                        f"(saltato): {e}",
+                        "WARNING",
+                    )
+                    return ""
             if suffix == ".docx":
                 return extract_docx_text(att_path)
             if suffix in (".html", ".htm"):

@@ -361,5 +361,58 @@ class AudioRetryPolicyTests(unittest.TestCase):
         self.assertFalse(_is_non_retryable(Err("server error")))
 
 
+class UndecodableAudioTests(unittest.TestCase):
+    """Un video senza traccia audio è una condizione attesa, non un errore."""
+
+    def test_detects_could_not_be_decoded(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+        self.assertTrue(_is_undecodable_audio(
+            Exception('Status 400. Body: {"message":"Audio input could not '
+                      'be decoded. ","type":"invalid_request_file","code":"3310"}')))
+
+    def test_detects_code_attribute(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+
+        class Err(Exception):
+            code = "3310"
+
+        self.assertTrue(_is_undecodable_audio(Err("boom")))
+
+    def test_other_errors_not_flagged(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+        self.assertFalse(_is_undecodable_audio(Exception("rate limit")))
+        self.assertFalse(_is_undecodable_audio(None))
+
+    def test_attachment_processor_downgrades_to_warning(self):
+        """Il media non decodificabile produce WARNING (non ERROR) e testo vuoto."""
+        from config.settings import AppConfig
+        from ocr.audio_transcriber import AudioNotDecodableError
+        from pipeline.attachment_processor import AttachmentProcessor
+
+        class StubTranscriber:
+            model_id = "voxtral-mini-2602"
+
+            def transcribe(self, _path):
+                raise AudioNotDecodableError("Nessuna traccia audio decodificabile")
+
+        logs: list[tuple[str, str]] = []
+        ap = AttachmentProcessor(
+            config=AppConfig(), ocr_pipeline=None,
+            emit_log=lambda msg, level: logs.append((msg, level)),
+            on_page_complete=None, on_page_skipped=None,
+            on_page_native_text=None, audio_transcriber=StubTranscriber(),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video = Path(tmp) / "VID-20260519-WA0003.mp4"
+            video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+            text = ap.to_text(video)
+
+        self.assertEqual("", text)
+        levels = {level for _, level in logs}
+        self.assertIn("WARNING", levels)
+        self.assertNotIn("ERROR", levels)
+
+
 if __name__ == "__main__":
     unittest.main()

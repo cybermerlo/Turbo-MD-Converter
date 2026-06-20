@@ -27,6 +27,15 @@ class AudioTranscriberError(Exception):
     pass
 
 
+class AudioNotDecodableError(AudioTranscriberError):
+    """Il file non contiene audio decodificabile (es. video WhatsApp muto).
+
+    Condizione attesa e benigna: l'API risponde 400 / code 3310
+    "could not be decoded". Va trattata come skip, non come errore.
+    """
+    pass
+
+
 def _format_timestamp(seconds: float) -> str:
     """Formatta secondi in mm:ss (o hh:mm:ss)."""
     total = max(0, int(seconds))
@@ -82,6 +91,24 @@ def _is_non_retryable(exc: Exception) -> bool:
         c = int(m.group(1))
         return 400 <= c < 500 and c != 429
     return False
+
+
+def _is_undecodable_audio(exc: Exception | None) -> bool:
+    """True quando l'API rifiuta il file perché privo di audio decodificabile.
+
+    Tipico dei video WhatsApp senza traccia audio (es. GIF salvate come .mp4):
+    Mistral risponde 400 invalid_request_file / code 3310 "could not be decoded".
+    """
+    if exc is None:
+        return False
+    if str(getattr(exc, "code", "")) == "3310":
+        return True
+    msg = str(exc).lower()
+    return (
+        "could not be decoded" in msg
+        or "invalid_request_file" in msg
+        or '"code":"3310"' in msg
+    )
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
@@ -212,6 +239,16 @@ class AudioTranscriber:
                     attempt + 1, max_attempts - 1, audio_path.name, wait, e,
                 )
                 time.sleep(wait)
+
+        if _is_undecodable_audio(last_exc):
+            logger.info(
+                "Nessun audio decodificabile in '%s' (probabile video muto): %s",
+                audio_path.name, last_exc,
+            )
+            raise AudioNotDecodableError(
+                f"Nessuna traccia audio decodificabile in '{audio_path.name}' "
+                f"(probabile video senza audio)"
+            ) from last_exc
 
         logger.error("Errore trascrizione '%s': %s", audio_path.name, last_exc)
         raise AudioTranscriberError(

@@ -10,6 +10,22 @@ Regole:
 - Non aggiungere riassunti, commenti o interpretazioni
 - Restituisci SOLO il testo trascritto"""
 
+DEFAULT_VIDEO_DESCRIPTION_PROMPT = """Basandoti ESCLUSIVAMENTE sui fotogrammi (le immagini) di questo video, descrivi in modo oggettivo e fedele ciò che si VEDE, in prosa scorrevole.
+
+Regola fondamentale — IGNORA TOTALMENTE L'AUDIO:
+- Descrivi un elemento SOLO se è effettivamente visibile nei fotogrammi.
+- Se percepisci un suono la cui fonte NON è inquadrata (es. un cane che abbaia, una voce fuori campo, musica, un clacson, applausi), NON menzionarlo e NON dedurne la presenza visiva: per questo compito quel suono NON esiste. Esempio: se si sente un cane ma nessun cane appare a schermo, NON scrivere che c'è un cane.
+- Nel dubbio se un elemento sia visibile oppure solo udibile, NON includerlo.
+
+Altre regole:
+- Descrivi persone, oggetti, luoghi, azioni, scene e testo realmente inquadrati.
+- Procedi in ordine cronologico, descrivendo l'evolversi delle scene in paragrafi discorsivi.
+- NON usare timestamp né elenchi puntati: scrivi un testo continuo.
+- Se compare testo leggibile (cartelli, documenti, sottotitoli, watermark), riportalo tra "virgolette".
+- Descrivi oggettivamente, senza interpretare intenzioni, emozioni o significati.
+- Non aggiungere riassunti finali, commenti o opinioni.
+- Restituisci SOLO la descrizione, in italiano."""
+
 DEFAULT_OCR_PROMPT = """Sei un assistente OCR specializzato in documenti legali italiani.
 Analizza questa immagine di una pagina di un documento legale e trascrivi TUTTO il testo visibile in modo preciso e completo.
 
@@ -143,8 +159,8 @@ PRICING = {
         "output_per_1m": 1.50,
     },
     "gemini-2.5-flash": {
-        "input_per_1m": 0.15,
-        "output_per_1m": 0.60,
+        "input_per_1m": 0.30,
+        "output_per_1m": 2.50,
     },
     "voxtral-mini-2602": {
         "input_per_1m": 0.10,

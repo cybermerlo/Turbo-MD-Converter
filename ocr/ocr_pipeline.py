@@ -50,6 +50,10 @@ class OCRResult:
     total_pages: int = 0
     successful_pages: int = 0
     native_text_pages: int = 0  # Pages where OCR was skipped (native text detected)
+    # True quando combined_text contiene già un corpo Markdown pronto (con le proprie
+    # intestazioni di sezione, es. video: "## Trascrizione audio" + "## Descrizione
+    # visiva"): il formatter lo emette così com'è, senza il wrapper generico.
+    prerendered_body: bool = False
 
 
 class OCRPipeline:

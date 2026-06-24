@@ -52,6 +52,14 @@ class AppConfig:
     smart_text_detection: bool = True
     mistral_api_key: str = ""
     final_error_check: bool = True
+    # Descrizione visiva dei video via Gemini (oltre alla trascrizione audio Voxtral).
+    # Usa lo stesso modello dell'OCR (ocr_model_id). Il visivo viene saltato per i
+    # video più lunghi di video_max_duration_min minuti (resta solo l'audio).
+    video_describe: bool = True
+    video_max_duration_min: int = 20
+    video_max_output_tokens: int = 2048
+    # Qualità automatica: video ≤ questa durata (minuti) → HIGH, oltre → LOW.
+    video_high_quality_max_min: int = 3
     # Importazione WhatsApp (Android via adb + backup locale cifrato).
     whatsapp_backup_key: str = ""   # 64 cifre esadecimali del backup E2E
     adb_path: str = ""              # override percorso adb.exe (vuoto = bundle/PATH)

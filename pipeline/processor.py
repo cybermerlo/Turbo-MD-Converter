@@ -9,8 +9,13 @@ from typing import Callable
 from config.settings import AppConfig
 from extraction.extractor import LegalExtractor
 from extraction.schemas import get_schema_preset
-from ocr.audio_transcriber import AudioTranscriber, AudioTranscriberError
+from ocr.audio_transcriber import (
+    AudioNotDecodableError,
+    AudioTranscriber,
+    AudioTranscriberError,
+)
 from ocr.ocr_pipeline import OCRPipeline, OCRResult
+from ocr.video_describer import VideoDescriber, VideoDescriberError
 from output.json_formatter import JsonFormatter
 from output.markdown_formatter import MarkdownFormatter
 from output.writer import OutputWriter
@@ -20,6 +25,7 @@ from pipeline.constants import (
     AUDIO_EXTENSIONS,
     DIRECT_READ_FORMATS,
     IMAGE_EXTENSIONS,
+    VIDEO_EXTENSIONS,
 )
 from pipeline.events import (
     BatchCompleteEvent,
@@ -39,6 +45,7 @@ from pipeline.events import (
 from pipeline.models import EmailAttachmentDocument
 from pipeline.rename_coordinator import RenameCoordinator, attachment_output_stem
 from utils.cost_tracker import CostTracker
+from utils.media_duration import probe_duration_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +66,17 @@ class DocumentProcessor:
         self.audio_transcriber = (
             AudioTranscriber(config.mistral_api_key)
             if config.mistral_api_key else None
+        )
+
+        # Descrizione visiva dei video: riusa il modello scelto per l'OCR.
+        self.video_describer = (
+            VideoDescriber(
+                config.gemini_api_key,
+                model_id=config.ocr_model_id,
+                max_output_tokens=config.video_max_output_tokens,
+                high_quality_max_min=config.video_high_quality_max_min,
+            )
+            if config.video_describe and config.gemini_api_key else None
         )
 
         if config.run_extraction:
@@ -223,7 +241,10 @@ class DocumentProcessor:
         cancel_event: threading.Event,
     ) -> tuple[OCRResult, bool, bool] | None:
         suffix = pdf_path.suffix.lower()
-        is_audio = suffix in AUDIO_EXTENSIONS
+        is_video = suffix in VIDEO_EXTENSIONS
+        # ".mp4" è sia audio sia video: il percorso video ha la precedenza e
+        # gestisce internamente anche la trascrizione audio.
+        is_audio = suffix in AUDIO_EXTENSIONS and not is_video
         is_image = suffix in IMAGE_EXTENSIONS
         name_lower = pdf_path.name.lower()
         is_tarball = name_lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz"))
@@ -231,9 +252,12 @@ class DocumentProcessor:
             suffix not in DIRECT_READ_FORMATS
             and not is_image
             and not is_audio
+            and not is_video
             and not is_tarball
         )
 
+        if is_video:
+            return self._acquire_video(pdf_path, cancel_event)
         if is_audio:
             return self._acquire_audio(pdf_path, cancel_event)
         if is_image:
@@ -287,6 +311,160 @@ class DocumentProcessor:
             )
         ))
         return ocr_result, False, False
+
+    def _acquire_video(
+        self,
+        pdf_path: Path,
+        cancel_event: threading.Event,
+    ) -> tuple[OCRResult, bool, bool] | None:
+        """Video → trascrizione audio (Voxtral) + descrizione visiva (Gemini).
+
+        Le due parti finiscono in un unico MD con due sezioni separate. La
+        descrizione visiva è opzionale (config.video_describe) e viene saltata per
+        i video più lunghi di config.video_max_duration_min (resta solo l'audio).
+        """
+        # 1. Trascrizione audio (tollerante: video muto → sezione audio vuota).
+        audio_text = ""
+        if self.audio_transcriber:
+            self.emit(LogEvent(
+                message=(
+                    f"Avvio trascrizione audio: {pdf_path.name}  "
+                    f"[{self.audio_transcriber.model_id}]"
+                )
+            ))
+            try:
+                trans_result = self.audio_transcriber.transcribe(pdf_path)
+                audio_text = trans_result["text"]
+                self.cost_tracker.add_call(
+                    model_id=self.audio_transcriber.model_id,
+                    input_tokens=trans_result["input_tokens"],
+                    output_tokens=trans_result["output_tokens"],
+                    phase="transcription",
+                )
+                self.emit(LogEvent(
+                    message=(
+                        f"Trascrizione audio completata: "
+                        f"{len(audio_text):,} caratteri, "
+                        f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
+                    )
+                ))
+            except AudioNotDecodableError:
+                self.emit(LogEvent(
+                    message=(
+                        f"Nessuna traccia audio in {pdf_path.name}: "
+                        f"procedo con la sola descrizione visiva"
+                    ),
+                    level="WARNING",
+                ))
+            except AudioTranscriberError as e:
+                self.emit(LogEvent(
+                    message=f"Trascrizione audio non riuscita ({e}): proseguo col solo visivo",
+                    level="WARNING",
+                ))
+        else:
+            self.emit(LogEvent(
+                message="Chiave API Mistral non configurata: niente trascrizione audio del video",
+                level="WARNING",
+            ))
+
+        # 2. Descrizione visiva (se abilitata e il video rientra nel limite di durata).
+        visual_text = ""
+        visual_attempted = False
+        if self.video_describer and not cancel_event.is_set():
+            duration = probe_duration_seconds(pdf_path)
+            if self._video_within_cap(pdf_path, duration):
+                visual_attempted = True
+                res_enum, res_name = self.video_describer.resolution_for(duration)
+                self.emit(LogEvent(
+                    message=(
+                        f"Avvio descrizione visiva: {pdf_path.name}  "
+                        f"[{self.video_describer.model_id} · qualità {res_name}]"
+                    )
+                ))
+                try:
+                    desc = self.video_describer.describe(pdf_path, media_resolution=res_enum)
+                    visual_text = desc["text"]
+                    self.cost_tracker.add_call(
+                        model_id=self.video_describer.model_id,
+                        input_tokens=desc["input_tokens"],
+                        output_tokens=desc["output_tokens"],
+                        phase="video",
+                    )
+                    self.emit(LogEvent(
+                        message=(
+                            f"Descrizione visiva completata: "
+                            f"{len(visual_text):,} caratteri, "
+                            f"{desc['input_tokens'] + desc['output_tokens']:,} token"
+                        )
+                    ))
+                except VideoDescriberError as e:
+                    self.emit(LogEvent(
+                        message=f"Descrizione visiva non riuscita: {e}",
+                        level="WARNING",
+                    ))
+
+        body = self._build_video_body(
+            audio_text, visual_text, visual_attempted=visual_attempted,
+        )
+        ocr_result = OCRResult(
+            pdf_path=pdf_path,
+            combined_text=body,
+            total_pages=1,
+            successful_pages=1,
+            prerendered_body=True,
+        )
+        return ocr_result, False, False
+
+    def _video_within_cap(self, pdf_path: Path, duration: float | None) -> bool:
+        """True se il video può essere descritto entro il limite di durata."""
+        cap_min = self.config.video_max_duration_min
+        if not cap_min or cap_min <= 0:
+            return True
+        if duration is None:
+            # Durata non leggibile: procedo comunque. Il costo resta contenuto da
+            # media_resolution LOW e dal tetto max_output_tokens.
+            self.emit(LogEvent(
+                message=(
+                    f"Durata di {pdf_path.name} non leggibile: "
+                    f"descrivo comunque, con tetto sui token di output"
+                )
+            ))
+            return True
+        if duration > cap_min * 60:
+            self.emit(LogEvent(
+                message=(
+                    f"Video {pdf_path.name} troppo lungo "
+                    f"({duration / 60:.1f} min > {cap_min} min): "
+                    f"salto la descrizione visiva, tengo solo l'audio"
+                ),
+                level="WARNING",
+            ))
+            return False
+        return True
+
+    @staticmethod
+    def _build_video_body(
+        audio_text: str,
+        visual_text: str,
+        *,
+        visual_attempted: bool,
+    ) -> str:
+        """Compone il corpo MD del video: sezione audio + (eventuale) sezione visiva."""
+        parts: list[str] = [
+            "## Trascrizione audio",
+            "",
+            audio_text.strip() or "_(nessuna traccia audio rilevata)_",
+        ]
+        if visual_attempted:
+            parts += [
+                "",
+                "---",
+                "",
+                "## Descrizione visiva",
+                "",
+                visual_text.strip() or "_(descrizione visiva non disponibile)_",
+            ]
+        return "\n".join(parts).strip()
 
     def _acquire_image(
         self,
@@ -413,6 +591,7 @@ class DocumentProcessor:
                     else None
                 ),
                 cost_info=None,
+                ocr_prerendered=ocr_result.prerendered_body,
             )
             if should_write_md
             else None
@@ -627,6 +806,14 @@ class DocumentProcessor:
                 message=(
                     f"  - Costo trascrizione audio: "
                     f"~${trans_cost.get('cost_usd', 0):.4f} (stimato)"
+                )
+            ))
+        video_cost = total_cost_info.get("video", {})
+        if video_cost.get("cost_usd", 0) > 0:
+            self.emit(LogEvent(
+                message=(
+                    f"  - Costo descrizione visiva video: "
+                    f"${video_cost.get('cost_usd', 0):.4f}"
                 )
             ))
         final_check_cost = total_cost_info.get("final_check", {})

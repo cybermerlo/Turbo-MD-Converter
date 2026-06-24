@@ -325,6 +325,18 @@ class SettingsWindow(ctk.CTkToplevel):
             variable=self.include_ocr_var,
         ).pack(padx=10, pady=(0, 8), anchor="w")
 
+        self.video_describe_var = ctk.BooleanVar(value=self.config.video_describe)
+        ctk.CTkCheckBox(
+            tab, text="Descrizione visiva dei video (Gemini, oltre alla trascrizione audio)",
+            variable=self.video_describe_var,
+        ).pack(padx=10, pady=(0, 2), anchor="w")
+        _hint(
+            tab,
+            "Per i video aggiunge una sezione che descrive ciò che si vede. "
+            f"Saltata per video più lunghi di {self.config.video_max_duration_min} minuti "
+            "(resta solo l'audio). Usa lo stesso modello dell'OCR.",
+        )
+
         # Subfolder
         _section_header(tab, "Sottocartella per i file Markdown")
 
@@ -572,6 +584,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.max_workers = int(self.workers_slider.get())
         self.config.output_directory = self.output_dir_entry.get().strip()
         self.config.include_ocr_text_in_output = self.include_ocr_var.get()
+        self.config.video_describe = self.video_describe_var.get()
         subfolder_name = self.subfolder_name_entry.get().strip()
         if subfolder_name:
             self.config.output_subfolder_name = subfolder_name

@@ -10,7 +10,7 @@ class CallRecord:
     model_id: str
     input_tokens: int
     output_tokens: int
-    phase: str  # "ocr", "extraction", "transcription" or "final_check"
+    phase: str  # "ocr", "extraction", "transcription", "video" or "final_check"
 
 
 class CostTracker:
@@ -33,15 +33,15 @@ class CostTracker:
         """Get aggregated totals by phase.
 
         Returns a dict with one entry per phase ("ocr", "extraction",
-        "transcription", "final_check") plus an aggregated "total", each in the
-        form {"input_tokens": N, "output_tokens": N, "cost_usd": X}.
+        "transcription", "video", "final_check") plus an aggregated "total", each
+        in the form {"input_tokens": N, "output_tokens": N, "cost_usd": X}.
         """
         result = {}
         total_in = 0
         total_out = 0
         total_cost = 0.0
 
-        for phase in ("ocr", "extraction", "transcription", "final_check"):
+        for phase in ("ocr", "extraction", "transcription", "video", "final_check"):
             phase_calls = [c for c in self._calls if c.phase == phase]
             in_tokens = sum(c.input_tokens for c in phase_calls)
             out_tokens = sum(c.output_tokens for c in phase_calls)

@@ -22,20 +22,38 @@ trascrizione audio (Mistral Voxtral) ed estrazione strutturata opzionale
 - `pipeline/` — `processor.py` (acquire→extract→write), `attachment_processor.py`
   (router file→testo), `email_sources.py` / `archive_sources.py` /
   `whatsapp_sources.py`, `constants.py`
-- `ocr/` — `gemini_ocr.py`, `ocr_pipeline.py`, `audio_transcriber.py`
+- `ocr/` — `gemini_ocr.py`, `ocr_pipeline.py`, `audio_transcriber.py`,
+  `video_describer.py` (descrizione visiva video)
 - `extraction/` — wrapper LangExtract · `output/` — formatter MD/JSON + writer
 - `config/` — `AppConfig` dataclass + persistenza JSON
+- `utils/` — `cost_tracker.py`, `media_duration.py` (durata video pure-python),
+  `ffmpeg_tools.py` (rimozione traccia audio via ffmpeg)
 - `whatsapp/` — importazione conversazioni (vedi sotto)
 - `vendor/adb/` — `adb.exe` + DLL impacchettati (necessari per WhatsApp)
+- ffmpeg arriva da `imageio-ffmpeg` (bundle pip); nel build è in `ffmpeg/ffmpeg.exe`
 - `tests/` — unittest
 
 ## Modello dati della pipeline
 Ogni input è un `Path`; **ogni input → un file `.md`**.
-`processor._acquire_text()` instrada per estensione: audio→trascrizione,
-immagini/PDF→OCR, suffissi in `DIRECT_READ_FORMATS`→lettura diretta
-(email, archivi, `.wachat`). Email e WhatsApp **uniscono corpo + media in un
-unico testo** → un solo MD (vedi `join_email_and_attachments` /
-`extract_whatsapp_parts`).
+`processor._acquire_text()` instrada per estensione: video→trascrizione audio +
+descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi in
+`DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.wachat`). Email e
+WhatsApp **uniscono corpo + media in un unico testo** → un solo MD (vedi
+`join_email_and_attachments` / `extract_whatsapp_parts`).
+
+## Descrizione visiva dei video
+Un video (`VIDEO_EXTENSIONS`: `.mp4 .mov .m4v .mkv .webm .avi`) produce UN solo MD
+con due sezioni separate: `## Trascrizione audio` (Voxtral) + `## Descrizione
+visiva` (Gemini, riusa `ocr_model_id`). Opzionale via `config.video_describe`.
+- **L'audio viene RIMOSSO prima dell'upload a Gemini** (`utils/ffmpeg_tools.strip_audio`,
+  remux `-c copy -an`): altrimenti contamina la descrizione (il modello "sente" un
+  cane e lo descrive a schermo anche se non inquadrato). Se ffmpeg manca, il visivo
+  viene saltato (non si reintroduce l'audio).
+- **Qualità per durata**: video ≤ `video_high_quality_max_min` min (def. 3) → HIGH,
+  oltre → LOW (`VideoDescriber.resolution_for`).
+- **Cap**: video > `video_max_duration_min` min (def. 20) → niente visivo, solo audio.
+- **Override test** (env): `TURBOMD_VIDEO_MEDIA_RESOLUTION=low|medium|high` (forza la
+  risoluzione), `TURBOMD_VIDEO_MAX_OUTPUT_TOKENS`.
 
 ## Funzione "Importa da WhatsApp" (Android, tutto in locale)
 Estrae conversazioni dal **backup locale** del telefono — niente cloud, niente

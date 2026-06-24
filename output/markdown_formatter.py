@@ -11,6 +11,7 @@ class MarkdownFormatter:
         total_pages: int,
         ocr_text: str | None = None,
         cost_info: dict | None = None,
+        ocr_prerendered: bool = False,
     ) -> str:
         lines: list[str] = []
 
@@ -37,9 +38,14 @@ class MarkdownFormatter:
 
         # OCR text section
         if ocr_text:
-            lines.append("## Contenuto del documento originale:")
-            lines.append("")
-            lines.append(ocr_text)
+            if ocr_prerendered:
+                # Il testo porta già le proprie intestazioni di sezione
+                # (es. video: "## Trascrizione audio" + "## Descrizione visiva").
+                lines.append(ocr_text)
+            else:
+                lines.append("## Contenuto del documento originale:")
+                lines.append("")
+                lines.append(ocr_text)
             lines.append("")
 
         return "\n".join(lines)

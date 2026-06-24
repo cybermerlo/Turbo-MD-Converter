@@ -28,6 +28,17 @@ adb_include_files = [
     if (ADB_DIR / name).exists()
 ]
 
+# ffmpeg (da imageio-ffmpeg) per rimuovere la traccia audio dai video prima di
+# inviarli a Gemini. Impacchettiamo il binario in ffmpeg/ffmpeg.exe accanto
+# all'eseguibile; utils/ffmpeg_tools.py lo cerca proprio lì nel build freezato.
+try:
+    import imageio_ffmpeg
+    _ffmpeg_src = imageio_ffmpeg.get_ffmpeg_exe()
+    ffmpeg_include_files = [(_ffmpeg_src, "ffmpeg/ffmpeg.exe")]
+except Exception as _e:  # binario assente: il video describer degraderà a runtime
+    print(f"[setup] Attenzione: ffmpeg non impacchettato ({_e})")
+    ffmpeg_include_files = []
+
 # ── Pacchetti con import dinamici che cx_Freeze non traccia da solo ──────────
 build_exe_options = {
     "packages": [
@@ -67,7 +78,7 @@ build_exe_options = {
         # Icone / loghi
         (str(ICON_PATH), "logo.ico"),
         (str(PROJECT_ROOT / "logo.png"), "logo.png"),
-    ] + adb_include_files,
+    ] + adb_include_files + ffmpeg_include_files,
     "excludes": [
         "test", "unittest", "email.test",
         "tkinter.test",

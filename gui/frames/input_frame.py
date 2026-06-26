@@ -4,7 +4,6 @@ from __future__ import annotations
 import ctypes
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from tkinter import filedialog
@@ -13,6 +12,7 @@ import customtkinter as ctk
 
 from gui import theme
 from gui.resources import app_capture_dir
+from utils.system import open_with_system
 
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".html", ".htm", ".md", ".rtf",
@@ -664,9 +664,8 @@ class InputFrame(ctk.CTkFrame):
     def is_clipboard_path(self, path: Path) -> bool:
         if path in self._clipboard_paths:
             return True
-        temp_root = Path(tempfile.gettempdir()) / "OCR_LangExtract"
         try:
-            return path.parent == temp_root and path.name.startswith("Appunti_")
+            return path.parent == app_capture_dir() and path.name.startswith("Appunti_")
         except Exception:
             return False
 
@@ -690,16 +689,4 @@ class InputFrame(ctk.CTkFrame):
         if self.on_open_requested:
             self.on_open_requested(path, self.is_clipboard_path(path))
             return
-        self._open_with_default_app(path)
-
-    @staticmethod
-    def _open_with_default_app(path: Path):
-        if not path.exists():
-            return
-        if sys.platform == "win32":
-            import os
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
+        open_with_system(path)

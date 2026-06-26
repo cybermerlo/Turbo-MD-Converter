@@ -8,9 +8,6 @@ L'utente assegna un nome a ciascuno; alla conferma ritorna la mappa
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import threading
 from pathlib import Path
 
@@ -19,16 +16,7 @@ import customtkinter as ctk
 from gui import theme
 from ocr.audio_transcriber import _format_timestamp
 from utils.ffmpeg_tools import _safe_unlink, extract_audio_segment
-
-
-def _open_with_default_player(path: Path) -> None:
-    """Apre un file audio col player predefinito del sistema."""
-    if sys.platform == "win32":
-        os.startfile(str(path))  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        subprocess.Popen(["open", str(path)])
-    else:
-        subprocess.Popen(["xdg-open", str(path)])
+from utils.system import open_with_system as _open_with_default_player
 
 
 class SpeakerIdentificationWindow(ctk.CTkToplevel):

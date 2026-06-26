@@ -1,8 +1,6 @@
 """Output preview frame — paper-themed, single Markdown view + actions."""
 
 from __future__ import annotations
-import subprocess
-import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
@@ -12,6 +10,7 @@ import customtkinter as ctk
 
 from gui import theme
 from gui.frames.markdown_editor_window import MarkdownEditorWindow
+from utils.system import open_with_system
 
 _MERGE_EXTENSIONS = (".md", ".markdown")
 
@@ -562,9 +561,4 @@ class OutputFrame(ctk.CTkFrame):
 
     def _open_output_folder(self) -> None:
         if self._output_dir and self._output_dir.exists():
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", str(self._output_dir)])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(self._output_dir)])
-            else:
-                subprocess.Popen(["xdg-open", str(self._output_dir)])
+            open_with_system(self._output_dir)

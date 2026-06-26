@@ -94,6 +94,9 @@ def download_installer(
             with dest.open("wb") as f:
                 while True:
                     if cancel_event and cancel_event.is_set():
+                        # Non lasciare un file di download parziale su disco.
+                        f.close()
+                        dest.unlink(missing_ok=True)
                         return
                     buf = resp.read(chunk)
                     if not buf:

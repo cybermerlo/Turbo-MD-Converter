@@ -16,14 +16,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+from utils.system import no_window_kwargs as _no_window_kwargs
+
 logger = logging.getLogger(__name__)
-
-
-def _no_window_kwargs() -> dict:
-    """Evita il flash della console su Windows quando l'app è freezata."""
-    if sys.platform == "win32":
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
-    return {}
 
 
 def get_ffmpeg_exe() -> str | None:

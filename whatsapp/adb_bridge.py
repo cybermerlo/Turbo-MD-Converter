@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gui.resources import resource_path
+from utils.system import no_window_kwargs as _no_window_kwargs
 from whatsapp.msgstore_reader import normalize_number
 
 # Radice WhatsApp nello storage condiviso (niente root necessario).
@@ -44,13 +45,6 @@ class DeviceUnauthorizedError(AdbError):
 class AdbDevice:
     serial: str
     state: str  # "device", "unauthorized", "offline", ...
-
-
-def _no_window_kwargs() -> dict:
-    """Evita il flash della console su Windows quando l'app è freezata."""
-    if sys.platform == "win32":
-        return {"creationflags": subprocess.CREATE_NO_WINDOW}
-    return {}
 
 
 _CONTACT_RE = re.compile(r"display_name=(?P<name>.*),\s*data1=(?P<num>.*?)\s*$")

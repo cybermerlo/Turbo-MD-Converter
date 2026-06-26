@@ -1,5 +1,6 @@
 """OCR pipeline orchestrator: PDF -> page-by-page OCR -> combined text."""
 
+import contextlib
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -106,77 +107,82 @@ class OCRPipeline:
         result = OCRResult(pdf_path=pdf_path, total_pages=total_pages)
         page_texts = []
 
-        for page_num, page in self.converter.iter_pages_raw(pdf_path):
-            # Check for cancellation
-            if cancel_event and cancel_event.is_set():
-                logger.info("OCR annullato dall'utente alla pagina %d", page_num + 1)
-                break
+        # ``closing`` garantisce che il documento PyMuPDF venga chiuso anche se
+        # il loop esce in anticipo (cancellazione/eccezione): senza questo, alla
+        # ``break`` il ``finally`` del generatore scatterebbe solo alla GC,
+        # lasciando il file PDF bloccato su Windows.
+        with contextlib.closing(self.converter.iter_pages_raw(pdf_path)) as pages:
+            for page_num, page in pages:
+                # Check for cancellation
+                if cancel_event and cancel_event.is_set():
+                    logger.info("OCR annullato dall'utente alla pagina %d", page_num + 1)
+                    break
 
-            if self.smart_text_detection and self.page_analyzer:
-                analysis = self.page_analyzer.analyze_page(page)
-                logger.info(
-                    "Pagina %d/%d: %s",
-                    page_num + 1, total_pages, analysis.reason,
-                )
-
-                if analysis.page_type == PageType.TEXT_NATIVE:
-                    # Extract text directly — no Gemini API call needed
-                    text = self.page_analyzer.extract_text(page)
-                    page_result = OCRPageResult(
-                        page_num=page_num,
-                        text=text,
-                        success=True,
-                        skipped_ocr=True,
-                    )
-                    result.page_results.append(page_result)
-                    result.successful_pages += 1
-                    result.native_text_pages += 1
-                    page_texts.append(text)
-
+                if self.smart_text_detection and self.page_analyzer:
+                    analysis = self.page_analyzer.analyze_page(page)
                     logger.info(
-                        "Pagina %d/%d: testo nativo estratto (%d car.), OCR saltato",
-                        page_num + 1, total_pages, len(text),
+                        "Pagina %d/%d: %s",
+                        page_num + 1, total_pages, analysis.reason,
                     )
-                    if on_page_native_text:
-                        on_page_native_text(
-                            page_num, total_pages,
-                            analysis.text_char_count, analysis.reason,
+
+                    if analysis.page_type == PageType.TEXT_NATIVE:
+                        # Extract text directly — no Gemini API call needed
+                        text = self.page_analyzer.extract_text(page)
+                        page_result = OCRPageResult(
+                            page_num=page_num,
+                            text=text,
+                            success=True,
+                            skipped_ocr=True,
                         )
-                    continue  # Skip the OCR path entirely
+                        result.page_results.append(page_result)
+                        result.successful_pages += 1
+                        result.native_text_pages += 1
+                        page_texts.append(text)
 
-                # SCANNED or MIXED — render to JPEG and send to Gemini
-                image_bytes = self.converter.render_page(page)
-            else:
-                # Smart detection disabled: render every page normally
-                image_bytes = self.converter.render_page(page)
+                        logger.info(
+                            "Pagina %d/%d: testo nativo estratto (%d car.), OCR saltato",
+                            page_num + 1, total_pages, len(text),
+                        )
+                        if on_page_native_text:
+                            on_page_native_text(
+                                page_num, total_pages,
+                                analysis.text_char_count, analysis.reason,
+                            )
+                        continue  # Skip the OCR path entirely
 
-            page_result = self._process_single_page(page_num, image_bytes)
-            result.page_results.append(page_result)
+                    # SCANNED or MIXED — render to JPEG and send to Gemini
+                    image_bytes = self.converter.render_page(page)
+                else:
+                    # Smart detection disabled: render every page normally
+                    image_bytes = self.converter.render_page(page)
 
-            if page_result.success:
-                result.successful_pages += 1
-                page_texts.append(page_result.text)
-                logger.info(
-                    "Pagina %d/%d OK: %d caratteri, %d+%d token",
-                    page_num + 1, total_pages, len(page_result.text),
-                    page_result.input_tokens, page_result.output_tokens,
-                )
-                # Warn if page was processed but returned no text
-                if not page_result.text.strip() and on_page_skipped:
-                    logger.warning(
-                        "⚠️  PAGINA %d SALTATA - Nessun testo estratto (possibile blocco RECITATION)",
-                        page_num + 1,
+                page_result = self._process_single_page(page_num, image_bytes)
+                result.page_results.append(page_result)
+
+                if page_result.success:
+                    result.successful_pages += 1
+                    page_texts.append(page_result.text)
+                    logger.info(
+                        "Pagina %d/%d OK: %d caratteri, %d+%d token",
+                        page_num + 1, total_pages, len(page_result.text),
+                        page_result.input_tokens, page_result.output_tokens,
                     )
-                    on_page_skipped(page_num, total_pages, "Nessun testo estratto (RECITATION o pagina vuota)")
-            else:
-                logger.error(
-                    "Pagina %d/%d ERRORE: %s",
-                    page_num + 1, total_pages, page_result.error,
-                )
-                page_texts.append(f"[Pagina {page_num + 1}: OCR non riuscito]")
+                    # Warn if page was processed but returned no text
+                    if not page_result.text.strip() and on_page_skipped:
+                        logger.warning(
+                            "⚠️  PAGINA %d SALTATA - Nessun testo estratto (possibile blocco RECITATION)",
+                            page_num + 1,
+                        )
+                        on_page_skipped(page_num, total_pages, "Nessun testo estratto (RECITATION o pagina vuota)")
+                else:
+                    logger.error(
+                        "Pagina %d/%d ERRORE: %s",
+                        page_num + 1, total_pages, page_result.error,
+                    )
+                    page_texts.append(f"[Pagina {page_num + 1}: OCR non riuscito]")
 
-            if on_page_complete:
-                on_page_complete(page_num, total_pages, page_result.success)
+                if on_page_complete:
+                    on_page_complete(page_num, total_pages, page_result.success)
 
         # Combine all page texts with separators
         parts = []

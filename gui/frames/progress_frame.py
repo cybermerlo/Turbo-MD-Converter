@@ -127,7 +127,6 @@ class CostChart(ctk.CTkFrame):
                          border_width=1, border_color=theme.RULE, **kwargs)
         self._rows: list[tuple[str, str, float]] = []   # (label, status, cost)
         self._tooltip = None
-        self._tooltip_after_id = None
 
         head = ctk.CTkFrame(self, fg_color="transparent")
         head.pack(fill="x", padx=12, pady=(10, 6))

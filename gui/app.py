@@ -1,6 +1,7 @@
 """Turbo MD Converter — main window (paper + amber redesign)."""
 
 from __future__ import annotations
+import logging
 import os
 import queue
 import subprocess
@@ -23,6 +24,7 @@ from gui.pipeline_event_handler import PipelineEventHandler
 from gui.toast import ToastStack
 from pipeline.events import PipelineEvent
 from pipeline.worker import PipelineWorker
+from utils.system import no_window_kwargs, open_with_system
 from version import VERSION
 
 
@@ -304,10 +306,18 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         while not self.gui_queue.empty():
             try:
                 event = self.gui_queue.get_nowait()
-                self._event_handler.handle(event)
-                has_events = True
             except queue.Empty:
                 break
+            has_events = True
+            # Un'eccezione in un handler non deve mai uccidere il loop di
+            # polling (lascerebbe la UI "congelata" sugli aggiornamenti): la
+            # si registra e si prosegue con l'evento successivo.
+            try:
+                self._event_handler.handle(event)
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Errore nella gestione dell'evento %r", type(event).__name__
+                )
         delay = 100 if has_events else 500
         self.after(delay, self._start_queue_polling)
 
@@ -375,14 +385,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if is_clipboard:
             self._open_clipboard_editor(path)
             return
-        if not path.exists():
-            return
-        if sys.platform == "win32":
-            os.startfile(path)  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
+        open_with_system(path)
 
     def _open_clipboard_editor(self, path: Path) -> None:
         dlg = ctk.CTkToplevel(self)
@@ -671,7 +674,7 @@ oLink.Save
                 vbs_path.write_text(vbs_script, encoding="utf-8")
                 subprocess.run(
                     ["cscript.exe", "//Nologo", str(vbs_path)],
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    **no_window_kwargs(),
                 )
                 self.log_frame.append("Collegamento aggiunto al menu 'Invia a'.")
             except Exception as e:

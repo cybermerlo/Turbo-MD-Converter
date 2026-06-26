@@ -33,7 +33,8 @@ trascrizione audio (ElevenLabs Scribe v2, con diarization) ed estrazione struttu
 - `utils/` — `cost_tracker.py`, `file_renamer.py` (nome file via LLM),
   `media_duration.py` (durata video pure-python), `ffmpeg_tools.py` (rimozione
   traccia audio), `retry.py` (backoff), `updater.py` (auto-update),
-  `text_utils.py`, `logging_config.py`
+  `text_utils.py`, `logging_config.py`, `system.py` (helper OS condivisi:
+  `no_window_kwargs`, `open_with_system`)
 - `whatsapp/` — importazione conversazioni (vedi sotto)
 - `vendor/adb/` — `adb.exe` + DLL impacchettati (necessari per WhatsApp)
 - ffmpeg arriva da `imageio-ffmpeg` (bundle pip); nel build è in `ffmpeg/ffmpeg.exe`
@@ -46,6 +47,9 @@ audio + descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi i
 `DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.wachat`). Email e
 WhatsApp **uniscono corpo + media in un unico testo** → un solo MD (vedi
 `join_email_and_attachments` / `extract_whatsapp_parts`).
+`AttachmentProcessor.to_text()` è **ricorsivo**: allegati annidati (una `.eml`
+inoltrata dentro un'altra `.eml`, archivi dentro archivi, `.wachat`) vengono
+espansi a testo invece di essere saltati.
 
 ## Rinomina file (LLM)
 Opzionale (`config.rename_files`). `RenameCoordinator` (`pipeline/rename_coordinator.py`)

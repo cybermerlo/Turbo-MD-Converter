@@ -99,6 +99,27 @@ class AttachmentProcessor:
                 return extract_rtf_text(att_path)
             if suffix in (".txt", ".md"):
                 return att_path.read_text(encoding="utf-8", errors="replace")
+            # Email/conversazioni annidate (es. una .eml inoltrata come allegato di
+            # un'altra .eml, o un .eml dentro un archivio): vanno espanse a testo,
+            # non saltate. Si usa sempre la modalità "join" (corpo + allegati uniti).
+            if suffix == ".eml":
+                body, attachments = extract_eml_parts(
+                    att_path, lambda p: self.to_text(p, cancel_event),
+                    self.emit_log, cancel_event,
+                )
+                return join_email_and_attachments(body, attachments)
+            if suffix == ".msg":
+                body, attachments = extract_msg_parts(
+                    att_path, lambda p: self.to_text(p, cancel_event),
+                    self.emit_log, cancel_event,
+                )
+                return join_email_and_attachments(body, attachments)
+            if suffix == ".wachat":
+                from pipeline.whatsapp_sources import extract_whatsapp_parts
+                return extract_whatsapp_parts(
+                    att_path, lambda p: self.to_text(p, cancel_event),
+                    self.emit_log, cancel_event,
+                )
             if suffix == ".p7m":
                 return self._extract_p7m_text(att_path, cancel_event)
             if is_archive_path(att_path):

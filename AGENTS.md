@@ -28,12 +28,14 @@ trascrizione audio (ElevenLabs Scribe v2, con diarization) ed estrazione struttu
 - `ocr/` — `gemini_ocr.py`, `ocr_pipeline.py`, `page_analyzer.py`, `pdf_converter.py`,
   `audio_transcriber.py`, `video_describer.py` (descrizione visiva video)
 - `extraction/` — wrapper LangExtract · `output/` — formatter MD/JSON + writer
-- `config/` — `settings.py` (`AppConfig` dataclass + persistenza JSON atomica),
-  `defaults.py` (prompt di default, `PRICING`, elenco modelli)
+- `config/` — `settings.py` (`AppConfig` dataclass + persistenza JSON atomica;
+  i segreti vanno nel keyring, vedi sotto), `defaults.py` (prompt di default,
+  `PRICING`, elenco modelli)
 - `utils/` — `cost_tracker.py`, `file_renamer.py` (nome file via LLM),
   `media_duration.py` (durata video pure-python), `ffmpeg_tools.py` (rimozione
   traccia audio), `retry.py` (backoff), `updater.py` (auto-update),
-  `text_utils.py`, `logging_config.py`
+  `secret_store.py` (segreti nel keyring/DPAPI), `text_utils.py`,
+  `logging_config.py`
 - `whatsapp/` — importazione conversazioni (vedi sotto)
 - `vendor/adb/` — `adb.exe` + DLL impacchettati (necessari per WhatsApp)
 - ffmpeg arriva da `imageio-ffmpeg` (bundle pip); nel build è in `ffmpeg/ffmpeg.exe`
@@ -136,6 +138,17 @@ Dettagli operativi:
 - `AudioTranscriber`: gli errori client 4xx (es. video senza traccia audio) **non
   vengono ritentati** (fail-fast).
 - `AppConfig`: aggiungere un campo alla dataclass basta (load/save automatici).
+  I campi in `secret_store.SECRET_FIELDS` (chiavi API, chiave backup WhatsApp)
+  sono **segreti**: `save_config` li mette nel keyring di sistema (Credential
+  Manager/DPAPI su Windows) e scrive `""` nel JSON; `load_config` li rilegge dal
+  keyring (priorità: `.env` > keyring > JSON-legacy). Senza keyring (o con
+  `TURBOMD_DISABLE_KEYRING=1`) ricadono nel JSON in chiaro. I test usano la env
+  var o un backend fittizio per restare deterministici.
+- Durante un batch `OptionsPanel.set_running(True)` **blocca** toggle, menu e
+  radio delle opzioni: cambiarli a metà elaborazione muterebbe la `config` che il
+  worker sta leggendo. `set_running(False)` ripristina via `_refresh_states()`.
+- La geometria della finestra (`config.window_geometry`) è salvata alla chiusura
+  (`_on_close`) e ripristinata all'avvio, mantenendola visibile sullo schermo.
 - WhatsApp moderno identifica molti contatti con un **LID** (`…@lid`, "numero
   privacy") al posto del numero. `msgstore_reader._resolve_jid()` lo traduce nel
   numero reale tramite la tabella **`jid_map`** (LID→`…@s.whatsapp.net`) prima di

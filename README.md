@@ -35,9 +35,13 @@ python main.py
 
 ## Configurazione
 
-Le chiavi API si inseriscono in **Impostazioni** e vengono salvate in
-`%APPDATA%\OCRLangExtract\config.json`. In alternativa, in sviluppo, si possono
-mettere in un file `.env` (vedi [`.env.example`](.env.example)):
+Le chiavi API si inseriscono in **Impostazioni**. I **segreti** (chiavi API e
+chiave di backup WhatsApp) vengono salvati nel **Credential Manager di Windows**
+(DPAPI) quando disponibile; le altre impostazioni in
+`%APPDATA%\OCRLangExtract\config.json`. Se il keyring non è disponibile (o è
+disabilitato con `TURBOMD_DISABLE_KEYRING=1`), i segreti ricadono nel
+`config.json` come in passato. In alternativa, in sviluppo, si possono mettere le
+chiavi in un file `.env` (vedi [`.env.example`](.env.example)):
 
 | Chiave | Uso |
 | --- | --- |

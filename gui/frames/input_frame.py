@@ -4,7 +4,6 @@ from __future__ import annotations
 import ctypes
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from tkinter import filedialog
@@ -664,9 +663,14 @@ class InputFrame(ctk.CTkFrame):
     def is_clipboard_path(self, path: Path) -> bool:
         if path in self._clipboard_paths:
             return True
-        temp_root = Path(tempfile.gettempdir()) / "OCR_LangExtract"
+        # Fallback per path non più in _clipboard_paths (es. dopo una rinomina):
+        # le catture incollate vengono scritte in app_capture_dir() come
+        # "Appunti_*.png" / "Appunti_*.txt" (vedi _paste_image / _paste_text).
         try:
-            return path.parent == temp_root and path.name.startswith("Appunti_")
+            return (
+                path.parent == app_capture_dir()
+                and path.name.startswith("Appunti_")
+            )
         except Exception:
             return False
 

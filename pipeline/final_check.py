@@ -57,9 +57,22 @@ def run_final_error_check(
 
     try:
         client = genai.Client(api_key=api_key)
+        # Stesse safety settings dell'OCR: i documenti legali/finanziari fanno
+        # scattare i filtri di sicurezza, che bloccherebbero il check facendolo
+        # "fallire tecnicamente" su contenuti del tutto legittimi.
+        safety_settings = [
+            types.SafetySetting(category=cat, threshold="BLOCK_NONE")
+            for cat in (
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+            )
+        ]
         response = client.models.generate_content(
             model=model_id,
             contents=[types.Part.from_text(text=prompt)],
+            config=types.GenerateContentConfig(safety_settings=safety_settings),
         )
         raw = (response.text or "").strip()
         if not raw:

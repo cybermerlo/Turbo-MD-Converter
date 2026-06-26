@@ -310,9 +310,6 @@ class DocumentProcessor:
         ))
         try:
             trans_result = self.audio_transcriber.transcribe(pdf_path)
-        except AudioTranscriberError as e:
-            self._fail(pdf_path, f"Errore trascrizione audio: {e}")
-            return None
         except Exception as e:
             self._fail(pdf_path, f"Errore trascrizione audio: {e}")
             return None

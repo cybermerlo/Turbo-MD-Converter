@@ -97,10 +97,15 @@ class GeminiOCR:
             output_tokens = 0
 
             for chunk in stream_response:
-                if chunk.text:
-                    text_chunks.append(chunk.text)
-                
-                if not chunk.text and hasattr(chunk, "candidates") and chunk.candidates:
+                # `chunk.text` è una property del SDK google-genai che può sollevare
+                # (chunk senza candidati, parte non testuale, blocco safety): la
+                # leggiamo UNA volta in una locale per non valutarla due volte e non
+                # trasformare un chunk innocuo in un GeminiOCRRetryableError.
+                chunk_text = getattr(chunk, "text", None)
+                if chunk_text:
+                    text_chunks.append(chunk_text)
+
+                if not chunk_text and getattr(chunk, "candidates", None):
                     candidate = chunk.candidates[0]
                     finish_reason = getattr(candidate, "finish_reason", "UNKNOWN")
                     # Log only if it stops unexpectedly

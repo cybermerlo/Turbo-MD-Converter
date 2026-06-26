@@ -143,12 +143,11 @@ class OCRPipeline:
                             analysis.text_char_count, analysis.reason,
                         )
                     continue  # Skip the OCR path entirely
+                # SCANNED o MIXED: prosegue verso il render qui sotto.
 
-                # SCANNED or MIXED — render to JPEG and send to Gemini
-                image_bytes = self.converter.render_page(page)
-            else:
-                # Smart detection disabled: render every page normally
-                image_bytes = self.converter.render_page(page)
+            # Render della pagina a JPEG per l'OCR Gemini (sia con smart detection
+            # su pagine non-native, sia con smart detection disattivata).
+            image_bytes = self.converter.render_page(page)
 
             page_result = self._process_single_page(page_num, image_bytes)
             result.page_results.append(page_result)

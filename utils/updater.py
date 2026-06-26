@@ -22,7 +22,15 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 
 def is_newer(latest: str, current: str) -> bool:
-    return _version_tuple(latest) > _version_tuple(current)
+    a, b = _version_tuple(latest), _version_tuple(current)
+    # Pareggia la lunghezza prima del confronto: senza questo "2026.6.9" non
+    # risulterebbe mai più recente di "2026.6.9.0" e, peggio, "2026.6.9.1" non
+    # batterebbe "2026.6.9" (la tupla più corta vince a parità di prefisso solo
+    # se più lunga). Schema versioni a 4 segmenti → confronto deve essere uniforme.
+    n = max(len(a), len(b))
+    a += (0,) * (n - len(a))
+    b += (0,) * (n - len(b))
+    return a > b
 
 
 def get_latest_release() -> dict:
@@ -61,7 +69,9 @@ def get_latest_release() -> dict:
     # Find .exe installer asset (use .get: una risposta API malformata ma 200
     # non deve far crashare il controllo aggiornamenti con un KeyError).
     assets = data.get("assets", [])
-    installer = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
+    installer = next(
+        (a for a in assets if a.get("name", "").lower().endswith(".exe")), None
+    )
 
     return {
         "version": version,
@@ -94,6 +104,10 @@ def download_installer(
             with dest.open("wb") as f:
                 while True:
                     if cancel_event and cancel_event.is_set():
+                        # Non lasciare un installer troncato sul disco: un avvio
+                        # successivo potrebbe tentare di eseguirlo.
+                        f.close()
+                        dest.unlink(missing_ok=True)
                         return
                     buf = resp.read(chunk)
                     if not buf:

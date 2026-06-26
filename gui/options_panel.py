@@ -19,6 +19,7 @@ class _PillToggle(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent", **kwargs)
         self._var = variable
         self._command = command
+        self._locked = False
         self._toggle_w, self._toggle_h = 36, 20
         self._canvas = ctk.CTkCanvas(self, width=self._toggle_w, height=self._toggle_h,
                                      bg=theme.PAPER, highlightthickness=0, bd=0)
@@ -34,8 +35,18 @@ class _PillToggle(ctk.CTkFrame):
             pass
         super().destroy()
 
+    def set_locked(self, locked: bool):
+        """Blocca/sblocca il toggle (durante l'elaborazione di un batch)."""
+        self._locked = locked
+        try:
+            self.configure(cursor="watch" if locked else "")
+            self._canvas.configure(cursor="watch" if locked else "")
+        except Exception:
+            pass
+        self._draw_toggle()
+
     def _toggle(self, _e=None):
-        if str(self.cget("cursor")) == "watch":
+        if self._locked:
             return
         self._var.set(not self._var.get())
         if self._command:
@@ -45,7 +56,11 @@ class _PillToggle(ctk.CTkFrame):
         c = self._canvas
         c.delete("all")
         on = bool(self._var.get())
-        bg = theme.AMBER if on else theme.RULE_STRONG
+        if self._locked:
+            # Toggle bloccato durante l'elaborazione: aspetto smorzato.
+            bg = theme.RULE if not on else theme.AMBER_DEEP
+        else:
+            bg = theme.AMBER if on else theme.RULE_STRONG
         # rounded track
         r = self._toggle_h / 2
         c.create_oval(0, 0, self._toggle_h, self._toggle_h, fill=bg, outline="")
@@ -78,7 +93,7 @@ def _toggle_row(parent, label_text, var, on_change, sublabel=""):
 
     pill = _PillToggle(row, variable=var, command=on_change)
     pill.pack(side="right")
-    return row
+    return row, pill
 
 
 class OptionsPanel(ctk.CTkFrame):
@@ -96,6 +111,11 @@ class OptionsPanel(ctk.CTkFrame):
         self._on_start = on_start
         self._on_cancel = on_cancel
         self._on_open_rename_context = on_open_rename_context
+
+        # Widget bloccati durante l'elaborazione (evita di mutare la config mentre
+        # il worker la sta leggendo). Popolati man mano qui sotto.
+        self._pills: list[_PillToggle] = []
+        self._output_mode_radios: list[ctk.CTkRadioButton] = []
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)  # scroll area expands
@@ -159,17 +179,18 @@ class OptionsPanel(ctk.CTkFrame):
         theme.section_label(ops, "Operazioni").grid(
             row=0, column=0, sticky="w", padx=14, pady=(12, 6))
 
-        ocr_row = _toggle_row(ops, "OCR — estrai testo", self.run_ocr_var,
-                              on_change=self._fire_change,
-                              sublabel="Estrazione testuale tramite Gemini")
+        ocr_row, ocr_pill = _toggle_row(ops, "OCR — estrai testo", self.run_ocr_var,
+                                        on_change=self._fire_change,
+                                        sublabel="Estrazione testuale tramite Gemini")
         ocr_row.grid(row=1, column=0, sticky="ew", padx=14, pady=(4, 8))
 
-        ext_row = _toggle_row(ops, "Estrazione strutturata", self.run_extraction_var,
-                              on_change=self._fire_change,
-                              sublabel="JSON conforme a uno schema")
+        ext_row, ext_pill = _toggle_row(ops, "Estrazione strutturata",
+                                        self.run_extraction_var,
+                                        on_change=self._fire_change,
+                                        sublabel="JSON conforme a uno schema")
         ext_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(4, 4))
 
-        email_att_row = _toggle_row(
+        email_att_row, email_att_pill = _toggle_row(
             ops,
             "Allegati email separati",
             self.email_attachments_separate_var,
@@ -198,12 +219,13 @@ class OptionsPanel(ctk.CTkFrame):
         )
         self.schema_menu.pack(side="right")
 
-        rename_row = _toggle_row(ops, "Rinomina file", self.rename_files_var,
-                                 on_change=self._on_rename_changed,
-                                 sublabel="Suggerimenti di nome dall'AI")
+        rename_row, rename_pill = _toggle_row(ops, "Rinomina file",
+                                              self.rename_files_var,
+                                              on_change=self._on_rename_changed,
+                                              sublabel="Suggerimenti di nome dall'AI")
         rename_row.grid(row=5, column=0, sticky="ew", padx=14, pady=(4, 4))
 
-        final_check_row = _toggle_row(
+        final_check_row, final_check_pill = _toggle_row(
             ops,
             "Check finale errori OCR (LLM)",
             self.final_error_check_var,
@@ -211,6 +233,10 @@ class OptionsPanel(ctk.CTkFrame):
             sublabel="Verifica i file convertiti con il modello LLM",
         )
         final_check_row.grid(row=6, column=0, sticky="ew", padx=14, pady=(4, 4))
+
+        self._pills = [
+            ocr_pill, ext_pill, email_att_pill, rename_pill, final_check_pill,
+        ]
 
         # Rename mode + batch context
         self.rename_extra = ctk.CTkFrame(ops, fg_color="transparent")
@@ -293,7 +319,7 @@ class OptionsPanel(ctk.CTkFrame):
             ("cartella",      "Cartella specifica…"),
         ]
         for i, (value, label) in enumerate(modes):
-            ctk.CTkRadioButton(
+            radio = ctk.CTkRadioButton(
                 out_card, text=label,
                 variable=self.output_mode_var, value=value,
                 font=theme.font(11), text_color=theme.INK_2,
@@ -302,7 +328,9 @@ class OptionsPanel(ctk.CTkFrame):
                 border_color=theme.RULE_STRONG,
                 fg_color=theme.AMBER, hover_color=theme.AMBER_DEEP,
                 command=self._on_output_mode_changed,
-            ).grid(row=1+i, column=0, sticky="w", padx=20, pady=2)
+            )
+            radio.grid(row=1+i, column=0, sticky="w", padx=20, pady=2)
+            self._output_mode_radios.append(radio)
 
         # Folder picker row
         self._cartella_row = ctk.CTkFrame(out_card, fg_color="transparent")
@@ -404,6 +432,28 @@ class OptionsPanel(ctk.CTkFrame):
     def set_running(self, running: bool):
         self.start_btn.configure(state="disabled" if running else "normal")
         self.cancel_btn.configure(state="normal" if running else "disabled")
+
+        # Blocca le opzioni durante l'elaborazione: cambiarle a metà batch
+        # muterebbe self.config mentre il worker la sta leggendo.
+        for pill in self._pills:
+            pill.set_locked(running)
+
+        state = "disabled" if running else "normal"
+        other_widgets = [
+            self.schema_menu, self.rename_mode_menu, self.model_menu,
+            self.batch_ctx_cb, self.output_md_cb, self.output_json_cb,
+            self.ctx_btn, *self._output_mode_radios,
+        ]
+        for widget in other_widgets:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+
+        if not running:
+            # Ripristina gli stati dipendenti dalle opzioni (es. schema attivo
+            # solo se l'estrazione è on): _refresh_states li ricalcola.
+            self._refresh_states()
 
     def set_can_start(self, can_start: bool):
         if self.cancel_btn.cget("state") == "normal":

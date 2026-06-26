@@ -1,5 +1,10 @@
 # Gemini API — Riferimento completo (aprile 2026)
 
+> **Nota (riferimento, non "come funziona il codice"):** l'app usa **solo**
+> `client.models.generate_content` (generateContent). Le sezioni su **Interactions
+> API** / Deep Research sono materiale di riferimento per il futuro, non sono
+> cablate nel codice. Utile qui-e-ora: lo snippet SDK sotto, gli ID modello e i prezzi.
+
 ## SDK e client
 
 ```python

@@ -18,16 +18,22 @@ trascrizione audio (Mistral Voxtral) ed estrazione strutturata opzionale
 ## Architettura (cartelle)
 - `main.py` — entry point GUI
 - `gui/` — interfaccia: `app.py` (finestra principale), `frames/` (pannelli),
-  `theme.py` (stile paper+amber), `resources.py` (path risorse + cartelle output)
-- `pipeline/` — `processor.py` (acquire→extract→write), `attachment_processor.py`
-  (router file→testo), `email_sources.py` / `archive_sources.py` /
-  `whatsapp_sources.py`, `constants.py`
-- `ocr/` — `gemini_ocr.py`, `ocr_pipeline.py`, `audio_transcriber.py`,
-  `video_describer.py` (descrizione visiva video)
+  `options_panel.py` (rail opzioni), `pipeline_event_handler.py` (eventi worker→UI),
+  `theme.py` (stile paper+amber), `toast.py`, `resources.py` (path risorse + output)
+- `pipeline/` — `processor.py` (`DocumentProcessor`: acquire→extract→write),
+  `attachment_processor.py` (router file→testo), `email_sources.py` /
+  `archive_sources.py` / `whatsapp_sources.py` (sorgenti), `rename_coordinator.py`
+  (`RenameCoordinator`: rinomina LLM), `final_check.py` (QA finale LLM),
+  `worker.py` (thread di lavoro), `events.py` / `models.py`, `constants.py`
+- `ocr/` — `gemini_ocr.py`, `ocr_pipeline.py`, `page_analyzer.py`, `pdf_converter.py`,
+  `audio_transcriber.py`, `video_describer.py` (descrizione visiva video)
 - `extraction/` — wrapper LangExtract · `output/` — formatter MD/JSON + writer
-- `config/` — `AppConfig` dataclass + persistenza JSON
-- `utils/` — `cost_tracker.py`, `media_duration.py` (durata video pure-python),
-  `ffmpeg_tools.py` (rimozione traccia audio via ffmpeg)
+- `config/` — `settings.py` (`AppConfig` dataclass + persistenza JSON atomica),
+  `defaults.py` (prompt di default, `PRICING`, elenco modelli)
+- `utils/` — `cost_tracker.py`, `file_renamer.py` (nome file via LLM),
+  `media_duration.py` (durata video pure-python), `ffmpeg_tools.py` (rimozione
+  traccia audio), `retry.py` (backoff), `updater.py` (auto-update),
+  `text_utils.py`, `logging_config.py`
 - `whatsapp/` — importazione conversazioni (vedi sotto)
 - `vendor/adb/` — `adb.exe` + DLL impacchettati (necessari per WhatsApp)
 - ffmpeg arriva da `imageio-ffmpeg` (bundle pip); nel build è in `ffmpeg/ffmpeg.exe`
@@ -35,11 +41,25 @@ trascrizione audio (Mistral Voxtral) ed estrazione strutturata opzionale
 
 ## Modello dati della pipeline
 Ogni input è un `Path`; **ogni input → un file `.md`**.
-`processor._acquire_text()` instrada per estensione: video→trascrizione audio +
-descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi in
+`DocumentProcessor._acquire_text()` instrada per estensione: video→trascrizione
+audio + descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi in
 `DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.wachat`). Email e
 WhatsApp **uniscono corpo + media in un unico testo** → un solo MD (vedi
 `join_email_and_attachments` / `extract_whatsapp_parts`).
+
+## Rinomina file (LLM)
+Opzionale (`config.rename_files`). `RenameCoordinator` (`pipeline/rename_coordinator.py`)
+orchestra la derivazione del nome via LLM (`utils/file_renamer.py`): da ogni testo
+OCR genera un nome descrittivo. `rename_mode` ∈ {`md`,`pdf`,`both`}. Con
+`rename_use_batch_context` la rinomina è **differita** a fine batch e usa il
+contesto degli altri documenti (profili condivisi); `rename_use_user_context` +
+`rename_user_context_text` guidano lo stile dei nomi.
+
+## Check finale errori
+Default-on (`config.final_error_check`). Dopo ogni batch, `pipeline/final_check.py`
+fa **una** chiamata LLM di QA sul Markdown prodotto e segnala possibili errori OCR;
+i file sospetti vengono marcati "warn" nella UI. Degrada in modo morbido se l'API
+fallisce (`check_failed_technically`, nessun blocco della conversione).
 
 ## Descrizione visiva dei video
 Un video (`VIDEO_EXTENSIONS`: `.mp4 .mov .m4v .mkv .webm .avi`) produce UN solo MD
@@ -87,6 +107,10 @@ Dettagli operativi:
 
 ## Convenzioni e gotcha
 - **UI e commenti in italiano.**
+- **Modalità output** (`config.output_mode`): `accanto` (di fianco al sorgente,
+  default), `sottocartella` (in `output_subfolder_name` accanto al sorgente),
+  `cartella` (cartella fissa `output_directory`; ripristinata a `accanto` a fine
+  batch se `cartella_output_one_shot`).
 - I subprocess adb usano `encoding="utf-8"`: l'output (rubrica, nomi) contiene
   caratteri non-ASCII/emoji e con il codec locale Windows (cp1252) andrebbe in crash.
 - Le note vocali WhatsApp sono **`.opus`** (in `AUDIO_EXTENSIONS` e

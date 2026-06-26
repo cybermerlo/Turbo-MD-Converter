@@ -1,7 +1,12 @@
 # Batch Rename Context (LLM Examples) Implementation Plan
- 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan.
- 
+
+> **STATO: IMPLEMENTATO** (documento storico). La funzione è viva in
+> `utils/file_renamer.py` (`rename_examples`, `_build_rename_context_block`) e in
+> `pipeline/rename_coordinator.py` (`RenameCoordinator.rename_files` aggiorna la
+> history); test in `tests/test_file_renamer_batch_context.py`. Conservato come
+> riferimento progettuale — i percorsi assoluti e i puntatori a funzione qui sotto
+> sono d'epoca e non più accurati.
+
 **Goal:** Rendere le rinomine automatiche coerenti all’interno di un batch, passando al modello esempi delle rinomine già effettuate.
  
 **Architecture:** Manteniamo una “rename history” in memoria per la durata di `process_batch`. Ad ogni file successivo, iniettiamo nel prompt di rinomina una sezione con esempi `originale -> finale` (ultimi N) e istruzioni per mantenere lo stesso stile. Dopo la rinomina effettiva su disco, aggiungiamo l’esempio reale alla history.

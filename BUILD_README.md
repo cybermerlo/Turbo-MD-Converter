@@ -33,6 +33,14 @@ Se hai già una build in `build/exe.*` e vuoi rigenerare solo il setup:
 python build_installer.py --iss-only
 ```
 
+## Solo aggiornamento versione
+
+Per aggiornare solo `version.py` / `build_info.json` senza eseguire la build:
+
+```powershell
+python build_installer.py --version-only
+```
+
 ## Risoluzione problemi
 
 ### ISCC.exe non trovato

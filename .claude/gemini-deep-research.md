@@ -1,5 +1,9 @@
 # Gemini Deep Research — Skill (aprile 2026)
 
+> **Nota:** riferimento per il futuro. Questa funzione **non è implementata**
+> nell'app (nessuna chiamata `interactions.create` nel codice); Turbo MD Converter
+> usa solo `generate_content`.
+
 Questa skill descrive **come usare l’agente Gemini Deep Research** tramite **Interactions API** (non tramite `generate_content`).
 
 ## Quando usarlo

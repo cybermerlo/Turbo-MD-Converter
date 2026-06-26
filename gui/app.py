@@ -5,7 +5,6 @@ import os
 import queue
 import subprocess
 import sys
-import tkinter as tk
 from pathlib import Path
 
 import customtkinter as ctk
@@ -354,7 +353,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
                 self._cost_per_input.pop(p, None)
         for p in list(self._error_keys):
             if p not in current:
-                self.toast_stack._on_toast_closed(self._error_keys[p])
+                self.toast_stack.dismiss(self._error_keys[p])
                 self._error_keys.pop(p, None)
         self._refresh_cost_chart()
 

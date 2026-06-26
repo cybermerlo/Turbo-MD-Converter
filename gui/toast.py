@@ -70,6 +70,15 @@ class ToastStack(ctk.CTkFrame):
     def _on_toast_closed(self, key):
         self._toasts.pop(key, None)
 
+    def dismiss(self, key):
+        """Rimuove e distrugge il toast con la chiave data (no-op se assente)."""
+        toast = self._toasts.pop(key, None)
+        if toast is not None:
+            try:
+                toast.destroy()
+            except Exception:
+                pass
+
     def clear(self):
         for t in list(self._toasts.values()):
             try:

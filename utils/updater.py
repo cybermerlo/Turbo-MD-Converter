@@ -3,7 +3,6 @@
 import json
 import os
 import sys
-import tempfile
 import threading
 import urllib.request
 from pathlib import Path
@@ -59,15 +58,16 @@ def get_latest_release() -> dict:
     notes = (data.get("body") or "").strip()
     html_url = data.get("html_url", "")
 
-    # Find .exe installer asset
+    # Find .exe installer asset (use .get: una risposta API malformata ma 200
+    # non deve far crashare il controllo aggiornamenti con un KeyError).
     assets = data.get("assets", [])
-    installer = next((a for a in assets if a["name"].endswith(".exe")), None)
+    installer = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
 
     return {
         "version": version,
-        "download_url": installer["browser_download_url"] if installer else None,
-        "asset_name": installer["name"] if installer else None,
-        "asset_size": installer["size"] if installer else 0,
+        "download_url": installer.get("browser_download_url") if installer else None,
+        "asset_name": installer.get("name") if installer else None,
+        "asset_size": installer.get("size", 0) if installer else 0,
         "release_notes": notes,
         "html_url": html_url,
     }

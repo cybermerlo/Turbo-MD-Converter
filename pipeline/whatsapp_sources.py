@@ -18,6 +18,20 @@ from pathlib import Path
 _MEDIA_RE = re.compile(r"\[\[MEDIA:\s*(media/[^\]\s]+)\]\]")
 
 
+def _safe_extract_all(zf: zipfile.ZipFile, dest: Path) -> None:
+    """Estrae lo zip in `dest` rifiutando le voci che evadono dalla cartella.
+
+    Un `.wachat` è uno zip: un pacchetto malevolo con nomi tipo `../../x`
+    (Zip Slip / path traversal) potrebbe altrimenti scrivere fuori da `dest`.
+    """
+    dest_resolved = dest.resolve()
+    for member in zf.infolist():
+        target = (dest / member.filename).resolve()
+        if target != dest_resolved and dest_resolved not in target.parents:
+            raise RuntimeError(f"voce non sicura nel pacchetto: {member.filename!r}")
+    zf.extractall(dest)
+
+
 def extract_whatsapp_parts(
     file_path: Path,
     process_attachment: Callable[[Path], str],
@@ -29,7 +43,7 @@ def extract_whatsapp_parts(
         tmp = Path(tmpdir)
         try:
             with zipfile.ZipFile(file_path) as zf:
-                zf.extractall(tmp)
+                _safe_extract_all(zf, tmp)
         except Exception as e:
             raise RuntimeError(
                 f"Pacchetto WhatsApp non valido '{file_path.name}': {e}"

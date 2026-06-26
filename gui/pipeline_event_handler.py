@@ -236,10 +236,14 @@ class PipelineEventHandler:
     def _on_error(self, event: ErrorEvent) -> None:
         self.app.log_frame.append(event.error_message, "ERROR")
         target = getattr(event, "pdf_path", None)
+        key = f"err-{target}" if target else "err-general"
         if target:
             self.app.input_frame.set_status_for_file(target, "err")
+            # Traccia la chiave del toast per poterlo rimuovere quando il file
+            # viene tolto dalla lista (vedi TurboMDConverterApp._on_files_changed).
+            self.app._error_keys[target] = key
         self.app._show_toast(
-            key=f"err-{target}" if target else "err-general",
+            key=key,
             title="Errore di elaborazione",
             message=event.error_message,
             level="error",

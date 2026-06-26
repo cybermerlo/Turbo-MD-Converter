@@ -1,6 +1,7 @@
 """OCR via Gemini Flash vision API."""
 
 import logging
+import re
 
 from google import genai
 from google.genai import types
@@ -11,8 +12,33 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiOCRError(Exception):
-    """Raised when Gemini OCR fails."""
+    """Raised when Gemini OCR fails (errore permanente: non va ritentato)."""
     pass
+
+
+class GeminiOCRRetryableError(GeminiOCRError):
+    """Errore OCR transitorio (429, 5xx, rete): vale la pena ritentare."""
+    pass
+
+
+def _is_non_retryable(exc: Exception) -> bool:
+    """True per errori client permanenti (4xx, escluso 429 e affini).
+
+    Ritentare un 401 (chiave non valida), un 400 (richiesta malformata) o un 404
+    (modello inesistente) spreca solo chiamate e secondi di backoff — su un PDF di
+    50 pagine con chiave errata sarebbero 200 tentativi inutili. I 429 e i 5xx
+    restano ritentabili.
+    """
+    code = getattr(exc, "code", None)
+    if not isinstance(code, int):
+        code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return 400 <= code < 500 and code not in (408, 409, 425, 429)
+    m = re.search(r"\b(\d{3})\b", str(exc))
+    if m:
+        c = int(m.group(1))
+        return 400 <= c < 500 and c not in (408, 409, 425, 429)
+    return False
 
 
 class GeminiOCR:
@@ -103,4 +129,5 @@ class GeminiOCR:
 
         except Exception as e:
             logger.error("Errore OCR pagina %d: %s", page_num + 1, e)
-            raise GeminiOCRError(f"OCR fallito per pagina {page_num + 1}: {e}") from e
+            err_cls = GeminiOCRError if _is_non_retryable(e) else GeminiOCRRetryableError
+            raise err_cls(f"OCR fallito per pagina {page_num + 1}: {e}") from e

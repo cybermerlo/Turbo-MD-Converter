@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
@@ -40,7 +41,6 @@ class AppConfig:
     rename_use_batch_context: bool = False
     rename_use_user_context: bool = False
     rename_user_context_text: str = ""
-    use_output_subfolder: bool = False
     output_subfolder_name: str = "File MD Convertiti"
     # "accanto"      → next to source file (default)
     # "sottocartella" → subfolder next to source (uses output_subfolder_name)
@@ -157,5 +157,21 @@ def save_config(config: AppConfig, config_path: Path | None = None) -> None:
     # affinché l'eseguibile ne mantenga la memoria.
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    # Scrittura atomica: serializza su un file temporaneo nella stessa cartella e
+    # poi rinomina con os.replace (atomico su Windows e POSIX). Se il processo si
+    # interrompe a metà scrittura, config.json resta integro: senza questo, un
+    # file troncato verrebbe scartato al riavvio e l'utente perderebbe chiavi API
+    # e impostazioni.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".config-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise

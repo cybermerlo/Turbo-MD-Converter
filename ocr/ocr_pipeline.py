@@ -8,7 +8,7 @@ from typing import Callable
 
 from config.defaults import PAGE_SEPARATOR
 from config.settings import AppConfig
-from ocr.gemini_ocr import GeminiOCR, GeminiOCRError
+from ocr.gemini_ocr import GeminiOCR, GeminiOCRError, GeminiOCRRetryableError
 from ocr.page_analyzer import PageAnalyzer, PageType
 
 # Supported image MIME types by extension
@@ -247,17 +247,22 @@ class OCRPipeline:
         def do_ocr():
             return self.ocr.ocr_page(image_bytes, page_num, mime_type=mime_type)
 
+        max_retries = 3
+
         def on_retry(attempt: int, exc: Exception):
             logger.warning(
-                "Retry %d/3 per pagina %d: %s", attempt, page_num + 1, exc
+                "Retry %d/%d per pagina %d: %s",
+                attempt, max_retries, page_num + 1, exc,
             )
 
         try:
+            # Solo gli errori transitori (GeminiOCRRetryableError) vengono ritentati;
+            # i 4xx permanenti (GeminiOCRError) falliscono subito senza backoff.
             ocr_result = retry_with_backoff(
                 func=do_ocr,
-                max_retries=3,
+                max_retries=max_retries,
                 base_delay=2.0,
-                retryable_exceptions=(GeminiOCRError,),
+                retryable_exceptions=(GeminiOCRRetryableError,),
                 on_retry=on_retry,
             )
 

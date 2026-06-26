@@ -16,7 +16,7 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
 
     def __init__(self, master, md_path: Path, on_saved: callable | None = None):
         super().__init__(master)
-        self.title(f"Anteprima Markdown â€” {md_path.name}")
+        self.title(f"Anteprima Markdown — {md_path.name}")
         self.geometry("960x740")
         self.minsize(720, 520)
         self.transient(master)
@@ -84,19 +84,19 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         self.search_count_label.pack(side="left", padx=(0, 2))
 
         self.search_prev_btn = theme.ghost_button(
-            search_box, "â†‘", width=30, height=28,
+            search_box, "↑", width=30, height=28,
             command=lambda: self._move_search(-1),
         )
         self.search_prev_btn.pack(side="left", padx=(0, 4), pady=5)
 
         self.search_next_btn = theme.ghost_button(
-            search_box, "â†“", width=30, height=28,
+            search_box, "↓", width=30, height=28,
             command=lambda: self._move_search(1),
         )
         self.search_next_btn.pack(side="left", padx=(0, 4), pady=5)
 
         self.search_clear_btn = theme.ghost_button(
-            search_box, "Ã—", width=30, height=28,
+            search_box, "×", width=30, height=28,
             command=self._clear_search,
         )
         self.search_clear_btn.pack(side="left", padx=(0, 6), pady=5)
@@ -176,7 +176,7 @@ class MarkdownEditorWindow(ctk.CTkToplevel):
         if not self.text.edit_modified():
             return
         self.text.edit_modified(False)
-        self.status_label.configure(text="Modificatoâ€¦")
+        self.status_label.configure(text="Modificato…")
         if self._save_after_id:
             self.after_cancel(self._save_after_id)
         if self._highlight_after_id:

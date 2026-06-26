@@ -33,8 +33,8 @@ def extract_keyword_hint(text: str, max_terms: int = 8) -> str:
         "alle", "agli", "allo", "nell", "nella", "nelle", "negli", "sulla",
         "sulle", "sugli", "come", "anche", "solo", "dopo", "prima", "quando",
         "quindi", "perche", "dove", "quali", "quale", "documento", "pagina",
-        "slide", "webinar", "appunti", "file", "testo", "sono", "una", "uno",
-        "dati", "data", "anno", "mese", "giorno", "dell", "all", "degli",
+        "slide", "webinar", "appunti", "file", "testo", "una", "uno",
+        "dati", "data", "anno", "mese", "giorno", "dell", "all",
     }
     counts = Counter(t for t in tokens if t not in stopwords and not t.isdigit())
     if not counts:

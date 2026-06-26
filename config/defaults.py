@@ -150,9 +150,6 @@ PRICING = {
     "scribe_v2": {
         "per_hour": 0.22,
     },
-    "scribe_v1": {
-        "per_hour": 0.22,
-    },
 }
 
 # Available schema preset names

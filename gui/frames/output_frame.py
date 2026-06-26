@@ -156,11 +156,6 @@ class OutputFrame(ctk.CTkFrame):
         )
         self.clear_preview_btn.pack(side="left", padx=(6, 0))
 
-        # Compat shims (referenced by app.py drag-drop registration)
-        self.tabview = self
-        self.merge_frame = self
-        self.merge_drop_box = self.md_textbox
-
         self.clear_preview()
 
     # ─── Markdown tag setup for inline preview ────────────────────────────
@@ -290,9 +285,6 @@ class OutputFrame(ctk.CTkFrame):
         self.copy_all_btn.configure(state="disabled")
         self.export_all_btn.configure(state="disabled")
         self.combined_editor_btn.configure(state="disabled")
-
-    def set_enabled(self, enabled: bool) -> None:
-        pass
 
     # ─── Internals ────────────────────────────────────────────────────────
     def _fill_preview(self, content: str):

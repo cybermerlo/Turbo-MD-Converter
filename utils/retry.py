@@ -29,16 +29,13 @@ def retry_with_backoff(
     Raises:
         The last exception if all retries are exhausted.
     """
-    last_exception = None
     for attempt in range(max_retries + 1):
         try:
             return func()
         except retryable_exceptions as e:
-            last_exception = e
             if attempt == max_retries:
                 raise
             delay = min(base_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
             if on_retry:
                 on_retry(attempt + 1, e)
             time.sleep(delay)
-    raise last_exception

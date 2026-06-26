@@ -17,7 +17,6 @@ class OCRProgressEvent(PipelineEvent):
     page_num: int = 0
     total_pages: int = 0
     success: bool = True
-    page_text_preview: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
     page_cost: float = 0.0
@@ -76,7 +75,6 @@ class BatchCompleteEvent(PipelineEvent):
     total_pdfs: int = 0
     successful: int = 0
     failed: int = 0
-    total_cost: dict = field(default_factory=dict)
     final_check_failed: bool = False
     final_check_issue_count: int = 0
 

@@ -20,6 +20,7 @@ from pipeline.events import (
     PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
+    SpeakerDiarizationEvent,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +53,8 @@ class PipelineEventHandler:
             self.on_batch_complete(event)
         elif isinstance(event, FileRenamedEvent):
             self._on_file_renamed(event)
+        elif isinstance(event, SpeakerDiarizationEvent):
+            self._on_speaker_diarization(event)
         elif isinstance(event, ErrorEvent):
             self._on_error(event)
         elif isinstance(event, LogEvent):
@@ -88,6 +91,11 @@ class PipelineEventHandler:
         )
         if app._converted_mds:
             app.output_frame.set_all_mds(list(app._converted_mds.values()))
+
+        # Identificazione interlocutori per i file con più speaker (dopo che il
+        # batch — incluse le rinomine differite — è concluso).
+        if getattr(app.config, "identify_speakers", True) and app._pending_speaker_ids:
+            app.after(150, app._run_speaker_identification)
 
         if fail == 0 and event.final_check_failed:
             app.log_frame.append(
@@ -223,6 +231,9 @@ class PipelineEventHandler:
                 app._converted_mds[event.new_path] = md_path
             cost = app._cost_per_input.pop(event.original_path, 0.0)
             app._cost_per_input[event.new_path] = cost
+            segs = app._pending_speaker_ids.pop(event.original_path, None)
+            if segs is not None:
+                app._pending_speaker_ids[event.new_path] = segs
             was_selected = app.input_frame.get_selected_path() == event.original_path
             app.input_frame.replace_path(event.original_path, event.new_path)
             if md_path:
@@ -232,6 +243,11 @@ class PipelineEventHandler:
             if cost:
                 app.input_frame.set_cost_for_file(event.new_path, cost)
             self.refresh_cost_chart()
+
+    def _on_speaker_diarization(self, event: SpeakerDiarizationEvent) -> None:
+        """Memorizza i segmenti diarizzati per l'identificazione a fine batch."""
+        if event.input_path is not None and event.segments:
+            self.app._pending_speaker_ids[event.input_path] = event.segments
 
     def _on_error(self, event: ErrorEvent) -> None:
         self.app.log_frame.append(event.error_message, "ERROR")

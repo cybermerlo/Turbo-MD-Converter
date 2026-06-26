@@ -93,6 +93,50 @@ def strip_audio(src: Path, timeout_s: float = 120.0) -> Path | None:
     return tmp_path
 
 
+def extract_audio_segment(
+    src: Path, start: float, end: float, timeout_s: float = 60.0,
+) -> Path | None:
+    """Estrae l'audio nell'intervallo [start, end] di ``src`` in un wav temporaneo.
+
+    Usato per far ascoltare all'utente uno spezzone e riconoscere lo speaker.
+    Ritorna il Path del wav (mono) o None se ffmpeg non è disponibile/fallisce;
+    il chiamante è responsabile di eliminarlo.
+    """
+    exe = get_ffmpeg_exe()
+    if not exe:
+        return None
+    start = max(0.0, float(start or 0.0))
+    duration = max(0.5, float(end or 0.0) - start)
+
+    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="turbomd_snippet_")
+    os.close(fd)
+    tmp_path = Path(tmp)
+
+    # -ss prima di -i = seek veloce; -t dopo -i = durata in output.
+    cmd = [
+        exe, "-y", "-loglevel", "error",
+        "-ss", f"{start:.3f}",
+        "-i", str(src),
+        "-t", f"{duration:.3f}",
+        "-vn",          # niente video
+        "-ac", "1",     # mono
+        str(tmp_path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, encoding="utf-8", errors="replace",
+            timeout=timeout_s, **_no_window_kwargs(),
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning("Estrazione spezzone audio fallita: %s", e)
+        _safe_unlink(tmp_path)
+        return None
+    if proc.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
+        _safe_unlink(tmp_path)
+        return None
+    return tmp_path
+
+
 def _safe_unlink(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)

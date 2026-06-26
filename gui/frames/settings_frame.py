@@ -172,6 +172,18 @@ class SettingsWindow(ctk.CTkToplevel):
             "degli interlocutori. Ottienila su: elevenlabs.io/app/settings/api-keys",
         )
 
+        self.identify_speakers_var = ctk.BooleanVar(value=self.config.identify_speakers)
+        ctk.CTkCheckBox(
+            tab, text="Identifica gli interlocutori (audio con più voci)",
+            variable=self.identify_speakers_var,
+        ).pack(padx=10, pady=(8, 2), anchor="w")
+        _hint(
+            tab,
+            "A fine elaborazione, per gli audio/video con più voci chiede di dare "
+            "un nome a ciascun interlocutore (con spezzoni di testo e audio) e "
+            "riscrive il Markdown con i nomi reali.",
+        )
+
     def _build_ocr_tab(self) -> None:
         tab = self.tabview.add("OCR")
 
@@ -584,6 +596,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.config.output_directory = self.output_dir_entry.get().strip()
         self.config.include_ocr_text_in_output = self.include_ocr_var.get()
         self.config.video_describe = self.video_describe_var.get()
+        self.config.identify_speakers = self.identify_speakers_var.get()
         subfolder_name = self.subfolder_name_entry.get().strip()
         if subfolder_name:
             self.config.output_subfolder_name = subfolder_name

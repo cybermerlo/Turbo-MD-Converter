@@ -1,13 +1,17 @@
 """Test per la trascrizione audio ElevenLabs Scribe v2: costruzione del
-testo diarizzato, speaker distinti e costo a ora."""
+testo diarizzato, speaker distinti, costo a ora e identificazione interlocutori."""
 
+import tempfile
+import threading
 import unittest
+from pathlib import Path
 
 from ocr.audio_transcriber import (
     build_transcript,
     distinct_speakers,
     segments_from_words,
 )
+from ocr.speaker_id import pick_speaker_snippets, rewrite_transcript_in_md
 from utils.cost_tracker import CostTracker
 
 
@@ -94,6 +98,136 @@ class PerHourCostTests(unittest.TestCase):
         a.merge_from(b)
         self.assertAlmostEqual(0.22, a.get_totals()["transcription"]["cost_usd"],
                                places=4)
+
+
+class SpeakerSnippetTests(unittest.TestCase):
+    def test_picks_longest_per_speaker_in_time_order(self):
+        segments = [
+            {"speaker_id": "speaker_0", "start": 0.0, "end": 1.0, "text": "Sì."},
+            {"speaker_id": "speaker_1", "start": 2.0, "end": 5.0,
+             "text": "Una frase lunga e riconoscibile per lo speaker uno."},
+            {"speaker_id": "speaker_0", "start": 6.0, "end": 9.0,
+             "text": "Anche speaker zero ha una battuta piuttosto lunga qui."},
+        ]
+        snips = pick_speaker_snippets(segments, max_snippets=1)
+        self.assertEqual(["speaker_0", "speaker_1"], list(snips))
+        self.assertIn("piuttosto lunga", snips["speaker_0"][0]["text"])
+
+    def test_truncates_long_text(self):
+        seg = [{"speaker_id": "speaker_0", "start": 0, "end": 1, "text": "x" * 500}]
+        out = pick_speaker_snippets(seg, max_chars=50)["speaker_0"][0]["text"]
+        self.assertTrue(out.endswith("…"))
+        self.assertLessEqual(len(out), 51)
+
+
+class RewriteTranscriptTests(unittest.TestCase):
+    def test_rewrites_provisional_labels_in_md(self):
+        segments = [
+            {"speaker_id": "speaker_0", "start": 0.0, "end": 1.0, "text": "Pronto?"},
+            {"speaker_id": "speaker_1", "start": 2.0, "end": 3.0, "text": "Ciao."},
+        ]
+        md_body = build_transcript(segments)
+        with tempfile.TemporaryDirectory() as d:
+            md = Path(d) / "call.md"
+            md.write_text(f"# call\n\n## Trascrizione audio\n\n{md_body}\n", encoding="utf-8")
+            changed = rewrite_transcript_in_md(
+                md, segments, {"speaker_0": "Mario", "speaker_1": "Anna"})
+            out = md.read_text(encoding="utf-8")
+        self.assertTrue(changed)
+        self.assertIn("] Mario:", out)
+        self.assertIn("] Anna:", out)
+        self.assertNotIn("] speaker_", out)
+
+    def test_noop_without_labels(self):
+        segments = [{"speaker_id": "speaker_0", "start": 0, "end": 1, "text": "Ciao."}]
+        with tempfile.TemporaryDirectory() as d:
+            md = Path(d) / "x.md"
+            md.write_text("contenuto", encoding="utf-8")
+            self.assertFalse(rewrite_transcript_in_md(md, segments, {}))
+
+
+class DiarizationPipelineTests(unittest.TestCase):
+    """Un audio con più speaker emette SpeakerDiarizationEvent e l'.md è rietichettabile."""
+
+    def test_multispeaker_emits_event_and_md_relabel(self):
+        from config.settings import AppConfig
+        from pipeline.events import SpeakerDiarizationEvent
+        from pipeline.processor import DocumentProcessor
+
+        segments = [
+            {"speaker_id": "speaker_0", "start": 0.0, "end": 1.0, "text": "Pronto?"},
+            {"speaker_id": "speaker_1", "start": 2.0, "end": 4.0, "text": "Sono Anna."},
+        ]
+
+        class MultiTranscriber:
+            model_id = "scribe_v2"
+
+            def transcribe(self, path):
+                return {
+                    "text": build_transcript(segments),
+                    "duration_seconds": 5.0,
+                    "language_code": "ita",
+                    "speakers": distinct_speakers(segments),
+                    "segments": segments,
+                }
+
+        events = []
+        cfg = AppConfig(
+            elevenlabs_api_key="k", gemini_api_key="k",
+            run_ocr=True, run_extraction=False, video_describe=False,
+            identify_speakers=True, output_formats=["markdown"],
+        )
+        proc = DocumentProcessor(cfg, events.append)
+        proc.audio_transcriber = MultiTranscriber()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "call.mp3"
+            audio.write_bytes(b"ID3 fake audio")
+            ok, _cost, _doc = proc.process_single(audio, threading.Event())
+            self.assertTrue(ok)
+
+            diar = [e for e in events if isinstance(e, SpeakerDiarizationEvent)]
+            self.assertEqual(1, len(diar))
+            self.assertEqual(2, len(diar[0].segments))
+            self.assertEqual(audio, diar[0].input_path)
+
+            md = Path(tmp) / "call.md"
+            self.assertTrue(md.exists())
+            self.assertIn("speaker_0:", md.read_text(encoding="utf-8"))
+
+            changed = rewrite_transcript_in_md(
+                md, segments, {"speaker_0": "Mario", "speaker_1": "Anna"})
+            self.assertTrue(changed)
+            out = md.read_text(encoding="utf-8")
+            self.assertIn("Mario:", out)
+            self.assertNotIn("speaker_0:", out)
+
+    def test_single_speaker_no_event(self):
+        from config.settings import AppConfig
+        from pipeline.events import SpeakerDiarizationEvent
+        from pipeline.processor import DocumentProcessor
+
+        class SingleTranscriber:
+            model_id = "scribe_v2"
+
+            def transcribe(self, path):
+                return {"text": "Una nota.", "duration_seconds": 3.0,
+                        "language_code": "ita", "speakers": ["speaker_0"],
+                        "segments": [{"speaker_id": "speaker_0", "start": 0.0,
+                                      "end": 3.0, "text": "Una nota."}]}
+
+        events = []
+        cfg = AppConfig(elevenlabs_api_key="k", gemini_api_key="k",
+                        run_ocr=True, run_extraction=False, video_describe=False,
+                        identify_speakers=True, output_formats=["markdown"])
+        proc = DocumentProcessor(cfg, events.append)
+        proc.audio_transcriber = SingleTranscriber()
+        with tempfile.TemporaryDirectory() as tmp:
+            audio = Path(tmp) / "nota.mp3"
+            audio.write_bytes(b"ID3")
+            proc.process_single(audio, threading.Event())
+        self.assertEqual(
+            [], [e for e in events if isinstance(e, SpeakerDiarizationEvent)])
 
 
 if __name__ == "__main__":

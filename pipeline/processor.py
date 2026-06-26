@@ -41,6 +41,7 @@ from pipeline.events import (
     PageSkippedEvent,
     PipelineCompleteEvent,
     PipelineEvent,
+    SpeakerDiarizationEvent,
 )
 from pipeline.models import EmailAttachmentDocument
 from pipeline.rename_coordinator import RenameCoordinator, attachment_output_stem
@@ -137,6 +138,7 @@ class DocumentProcessor:
     ) -> tuple[bool, dict, tuple[Path, list[Path]] | None]:
         self.cost_tracker.reset()
         self._pending_email_attachment_docs = []
+        self._pending_diarization = None
         self.emit(LogEvent(message=f"Inizio elaborazione: {pdf_path.name}"))
 
         acquire_result = self._acquire_text(pdf_path, cancel_event)
@@ -183,6 +185,15 @@ class DocumentProcessor:
             return self._fail(pdf_path, f"Errore scrittura output: {e}")
 
         self.emit(OutputWrittenEvent(file_paths=output_files))
+
+        # Più interlocutori rilevati: chiederemo all'utente di identificarli a
+        # fine batch (la chiave input_path segue le eventuali rinomine).
+        if self._pending_diarization:
+            self.emit(SpeakerDiarizationEvent(
+                input_path=pdf_path,
+                audio_path=pdf_path,
+                segments=self._pending_diarization["segments"],
+            ))
 
         renamed_pdf_path = pdf_path
         renamed_output_files = list(output_files)
@@ -268,6 +279,15 @@ class DocumentProcessor:
             return self._acquire_sidecar(pdf_path, cancel_event)
         return self._acquire_pdf(pdf_path, cancel_event)
 
+    def _maybe_flag_diarization(self, trans_result: dict) -> None:
+        """Segna il file per l'identificazione interlocutori se ha più speaker."""
+        if not getattr(self.config, "identify_speakers", False):
+            return
+        speakers = trans_result.get("speakers") or []
+        segments = trans_result.get("segments") or []
+        if len(speakers) > 1 and segments:
+            self._pending_diarization = {"segments": segments}
+
     def _acquire_audio(
         self,
         pdf_path: Path,
@@ -303,6 +323,7 @@ class DocumentProcessor:
             phase="transcription",
             duration_seconds=trans_result.get("duration_seconds", 0.0),
         )
+        self._maybe_flag_diarization(trans_result)
         ocr_result = self._make_ocr_result_from_text(pdf_path, trans_result["text"])
         self.emit(LogEvent(
             message=(
@@ -343,6 +364,7 @@ class DocumentProcessor:
                     phase="transcription",
                     duration_seconds=trans_result.get("duration_seconds", 0.0),
                 )
+                self._maybe_flag_diarization(trans_result)
                 self.emit(LogEvent(
                     message=(
                         f"Trascrizione audio completata: "

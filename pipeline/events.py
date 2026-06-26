@@ -124,3 +124,16 @@ class FileRenamedEvent(PipelineEvent):
     original_path: Path | None = None
     new_path: Path | None = None
     file_type: str = ""  # "pdf" or "md"
+
+
+@dataclass
+class SpeakerDiarizationEvent(PipelineEvent):
+    """Emitted quando un audio/video trascritto ha più interlocutori.
+
+    Permette di chiedere all'utente, a fine batch, di identificarli e di
+    riscrivere l'.md coi nomi reali. `input_path` è la chiave (segue le rinomine);
+    `audio_path` è il file da cui estrarre gli spezzoni audio.
+    """
+    input_path: Path | None = None
+    audio_path: Path | None = None
+    segments: list = field(default_factory=list)

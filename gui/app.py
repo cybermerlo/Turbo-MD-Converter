@@ -58,6 +58,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._converted_mds: dict[Path, Path] = {}
         self._cost_per_input: dict[Path, float] = {}
         self._error_keys: dict[Path, str] = {}
+        # input_path → segments diarizzati, per l'identificazione interlocutori a fine batch.
+        self._pending_speaker_ids: dict[Path, list] = {}
 
         self._build_layout()
         self._setup_drag_drop()
@@ -460,6 +462,7 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self._cost_per_input = {}
         self.toast_stack.clear()
         self._error_keys = {}
+        self._pending_speaker_ids = {}
 
         self.progress_frame.reset()
         self.progress_frame.set_batch(self._batch_total)
@@ -497,6 +500,48 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             self.toast_stack.show(key, title, message, level=level)
         except Exception:
             pass
+
+    # ─── Identificazione interlocutori (post-batch) ──────────────────────
+    def _run_speaker_identification(self) -> None:
+        """Per ogni file multi-speaker chiede i nomi e riscrive l'.md (in serie)."""
+        pending = list(self._pending_speaker_ids.items())
+        self._pending_speaker_ids = {}
+        self._identify_next_speaker(pending)
+
+    def _identify_next_speaker(self, pending: list) -> None:
+        if not pending:
+            return
+        input_path, segments = pending.pop(0)
+        md_path = self._converted_mds.get(input_path)
+        if not md_path or not Path(md_path).exists() or not Path(input_path).exists():
+            self._identify_next_speaker(pending)  # niente .md o audio: salta
+            return
+
+        from gui.frames.speaker_id_window import SpeakerIdentificationWindow
+        from ocr.speaker_id import pick_speaker_snippets, rewrite_transcript_in_md
+
+        def on_done(labels):
+            if labels:
+                try:
+                    if rewrite_transcript_in_md(md_path, segments, labels):
+                        self.log_frame.append(
+                            f"Interlocutori rinominati in {Path(md_path).name}")
+                        selected = self.input_frame.get_selected_path()
+                        if selected is not None and \
+                                self._converted_mds.get(selected) == md_path:
+                            self.output_frame.show_markdown_file(md_path)
+                except Exception as e:
+                    self.log_frame.append(
+                        f"Identificazione interlocutori fallita: {e}", "ERROR")
+            self._identify_next_speaker(pending)
+
+        SpeakerIdentificationWindow(
+            self,
+            file_label=Path(input_path).name,
+            audio_path=input_path,
+            snippets_by_speaker=pick_speaker_snippets(segments),
+            on_done=on_done,
+        )
 
     # ─── Settings / dialogs ──────────────────────────────────────────────
     def _open_settings(self) -> None:

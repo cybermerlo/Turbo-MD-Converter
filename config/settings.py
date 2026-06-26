@@ -51,6 +51,9 @@ class AppConfig:
     asked_sendto: bool = False
     smart_text_detection: bool = True
     elevenlabs_api_key: str = ""
+    # Se un audio/video ha più interlocutori, a fine batch chiede all'utente di
+    # identificarli (spezzoni testo+audio) e riscrive gli .md coi nomi reali.
+    identify_speakers: bool = True
     final_error_check: bool = True
     # Descrizione visiva dei video via Gemini (oltre alla trascrizione audio).
     # Usa lo stesso modello dell'OCR (ocr_model_id). Il visivo viene saltato per i

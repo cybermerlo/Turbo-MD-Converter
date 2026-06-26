@@ -61,6 +61,21 @@ fa **una** chiamata LLM di QA sul Markdown prodotto e segnala possibili errori O
 i file sospetti vengono marcati "warn" nella UI. Degrada in modo morbido se l'API
 fallisce (`check_failed_technically`, nessun blocco della conversione).
 
+## Trascrizione audio e identificazione interlocutori
+La trascrizione audio/video usa **ElevenLabs Scribe v2** (`ocr/audio_transcriber.py`,
+`speech_to_text.convert(model_id="scribe_v2", diarize=True)`), tariffata **a ora**
+(`PRICING["scribe_v2"]["per_hour"]`, costo da `audio_duration_secs`). Le `words`
+diventano turni per speaker (`segments_from_words`/`build_transcript`): testo piano
+per un solo interlocutore, righe `[mm:ss] speaker_X: …` se più di uno.
+
+Default-on (`config.identify_speakers`): se un file ha **più speaker**, il processor
+emette `SpeakerDiarizationEvent` (chiave `input_path`, segue le rinomine). A fine
+batch (`on_batch_complete`) l'app apre, in serie, `SpeakerIdentificationWindow`
+(`gui/frames/speaker_id_window.py`) con spezzoni testo + audio (▶ estrae il tratto
+via `ffmpeg_tools.extract_audio_segment`); i nomi scelti riscrivono l'`.md`
+(`ocr/speaker_id.rewrite_transcript_in_md`). Tutto **dopo** il batch: non blocca
+l'elaborazione.
+
 ## Descrizione visiva dei video
 Un video (`VIDEO_EXTENSIONS`: `.mp4 .mov .m4v .mkv .webm .avi`) produce UN solo MD
 con due sezioni separate: `## Trascrizione audio` (ElevenLabs) + `## Descrizione

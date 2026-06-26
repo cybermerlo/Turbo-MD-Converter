@@ -146,30 +146,30 @@ class SettingsWindow(ctk.CTkToplevel):
             "La stessa chiave viene usata per OCR (Gemini Vision) e per l'estrazione strutturata (LangExtract).",
         )
 
-        _section_header(tab, "Mistral (trascrizione audio)")
+        _section_header(tab, "ElevenLabs (trascrizione audio)")
 
-        ctk.CTkLabel(tab, text="Chiave API Mistral").pack(padx=10, pady=(0, 2), anchor="w")
+        ctk.CTkLabel(tab, text="Chiave API ElevenLabs").pack(padx=10, pady=(0, 2), anchor="w")
 
-        mistral_key_row = ctk.CTkFrame(tab, fg_color="transparent")
-        mistral_key_row.pack(padx=10, pady=(0, 4), fill="x")
+        elevenlabs_key_row = ctk.CTkFrame(tab, fg_color="transparent")
+        elevenlabs_key_row.pack(padx=10, pady=(0, 4), fill="x")
 
-        self.mistral_key_entry = ctk.CTkEntry(mistral_key_row, show="*", width=380)
-        self.mistral_key_entry.pack(side="left", padx=(0, 8))
-        self.mistral_key_entry.insert(0, self.config.mistral_api_key)
+        self.elevenlabs_key_entry = ctk.CTkEntry(elevenlabs_key_row, show="*", width=380)
+        self.elevenlabs_key_entry.pack(side="left", padx=(0, 8))
+        self.elevenlabs_key_entry.insert(0, self.config.elevenlabs_api_key)
 
-        self.show_mistral_key_var = ctk.BooleanVar(value=False)
+        self.show_elevenlabs_key_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            mistral_key_row, text="Mostra",
-            variable=self.show_mistral_key_var,
-            command=self._toggle_mistral_key_visibility,
+            elevenlabs_key_row, text="Mostra",
+            variable=self.show_elevenlabs_key_var,
+            command=self._toggle_elevenlabs_key_visibility,
             width=80,
         ).pack(side="left")
 
         _hint(
             tab,
-            "Chiave API Mistral per la trascrizione di file audio/video "
-            "(MP3, WAV, FLAC, M4A, OGG, MP4) via Voxtral. "
-            "Ottienila su: console.mistral.ai",
+            "Chiave API ElevenLabs per la trascrizione di file audio/video "
+            "(MP3, WAV, FLAC, M4A, OGG, MP4) via Scribe v2, con riconoscimento "
+            "degli interlocutori. Ottienila su: elevenlabs.io/app/settings/api-keys",
         )
 
     def _build_ocr_tab(self) -> None:
@@ -537,8 +537,8 @@ class SettingsWindow(ctk.CTkToplevel):
     def _toggle_key_visibility(self) -> None:
         self.api_key_entry.configure(show="" if self.show_key_var.get() else "*")
 
-    def _toggle_mistral_key_visibility(self) -> None:
-        self.mistral_key_entry.configure(show="" if self.show_mistral_key_var.get() else "*")
+    def _toggle_elevenlabs_key_visibility(self) -> None:
+        self.elevenlabs_key_entry.configure(show="" if self.show_elevenlabs_key_var.get() else "*")
 
     def _reset_ocr_prompt(self) -> None:
         self.ocr_prompt_text.delete("1.0", "end")
@@ -572,7 +572,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def _save(self) -> None:
         self.config.gemini_api_key = self.api_key_entry.get().strip()
         self.config.langextract_api_key = self.config.gemini_api_key
-        self.config.mistral_api_key = self.mistral_key_entry.get().strip()
+        self.config.elevenlabs_api_key = self.elevenlabs_key_entry.get().strip()
         self.config.ocr_prompt = self.ocr_prompt_text.get("1.0", "end").strip()
         self.config.ocr_model_id = self.ocr_model_menu.get()
         self.config.extraction_model_id = self.ocr_model_menu.get()

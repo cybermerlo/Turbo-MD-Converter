@@ -1,15 +1,5 @@
 """Default prompts, constants, and schema preset definitions."""
 
-DEFAULT_TRANSCRIPTION_PROMPT = """Trascrivi fedelmente e integralmente l'audio fornito.
-
-Regole:
-- Trascrivi ogni parola pronunciata, inclusi riempitivi ed esitazioni
-- Mantieni la punteggiatura e la struttura dei periodi
-- Se ci sono più interlocutori, separa gli interventi con un a capo
-- Se una parola è incomprensibile, indica [incomprensibile]
-- Non aggiungere riassunti, commenti o interpretazioni
-- Restituisci SOLO il testo trascritto"""
-
 DEFAULT_VIDEO_DESCRIPTION_PROMPT = """Basandoti ESCLUSIVAMENTE sui fotogrammi (le immagini) di questo video, descrivi in modo oggettivo e fedele ciò che si VEDE, in prosa scorrevole.
 
 Regola fondamentale — IGNORA TOTALMENTE L'AUDIO:
@@ -141,7 +131,8 @@ File convertiti:
 # Page separator used when combining OCR results
 PAGE_SEPARATOR = "\n\n--- Pagina {page_num} ---\n\n"
 
-# Gemini API pricing (per 1M tokens, USD)
+# Pricing per modello. I modelli Gemini sono tariffati per token (input/output
+# per 1M); la trascrizione ElevenLabs Scribe è tariffata per ora di audio.
 PRICING = {
     "gemini-3-flash-preview": {
         "input_per_1m": 0.50,
@@ -155,17 +146,12 @@ PRICING = {
         "input_per_1m": 0.30,
         "output_per_1m": 2.50,
     },
-    "voxtral-mini-2602": {
-        "input_per_1m": 0.10,
-        "output_per_1m": 0.30,
+    # ElevenLabs Speech-to-Text: $0.22 per ora di audio.
+    "scribe_v2": {
+        "per_hour": 0.22,
     },
-    "voxtral-mini-latest": {
-        "input_per_1m": 0.10,
-        "output_per_1m": 0.30,
-    },
-    "voxtral-small-latest": {
-        "input_per_1m": 0.10,
-        "output_per_1m": 0.30,
+    "scribe_v1": {
+        "per_hour": 0.22,
     },
 }
 

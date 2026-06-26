@@ -4,9 +4,10 @@ App desktop **Windows** (Python + CustomTkinter) che converte documenti eterogen
 in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`), archivi
 (`.zip`/`.7z`/`.tar.*`), firmati `.p7m` e **conversazioni WhatsApp**.
 
-Usa **Google Gemini** per l'OCR e la descrizione visiva dei video, **Mistral
-Voxtral** per la trascrizione audio ed (opzionale) **LangExtract** per
-l'estrazione strutturata. Regola: **ogni input → un file `.md`**.
+Usa **Google Gemini** per l'OCR e la descrizione visiva dei video, **ElevenLabs
+Scribe v2** per la trascrizione audio (con riconoscimento degli interlocutori) ed
+(opzionale) **LangExtract** per l'estrazione strutturata. Regola: **ogni input →
+un file `.md`**.
 
 ## Funzionalità principali
 
@@ -41,7 +42,7 @@ mettere in un file `.env` (vedi [`.env.example`](.env.example)):
 | Chiave | Uso |
 | --- | --- |
 | `GEMINI_API_KEY` | OCR e descrizione video (obbligatoria) |
-| `MISTRAL_API_KEY` | Trascrizione audio/note vocali |
+| `ELEVENLABS_API_KEY` | Trascrizione audio/note vocali (Scribe v2) |
 | `LANGEXTRACT_API_KEY` | Estrazione strutturata (default = Gemini) |
 
 ## Test

@@ -1,7 +1,7 @@
 """Descrizione visiva di un video via Gemini (Files API).
 
 Si occupa SOLO del "cosa si vede": l'audio del video è trascritto separatamente da
-Voxtral. IMPORTANTE: la traccia audio viene **rimossa** prima dell'upload (remux
+ElevenLabs. IMPORTANTE: la traccia audio viene **rimossa** prima dell'upload (remux
 senza re-encoding), perché altrimenti contamina la descrizione visiva (il modello
 "sente" un cane e lo descrive a schermo anche se non è inquadrato).
 

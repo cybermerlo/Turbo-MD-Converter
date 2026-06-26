@@ -41,13 +41,22 @@ def _make_mp4(duration: int, timescale: int) -> bytes:
 
 
 class FakeTranscriber:
-    model_id = "voxtral-mini-2602"
+    model_id = "scribe_v2"
 
     def __init__(self, text="Buongiorno a tutti."):
         self.text = text
 
     def transcribe(self, path):
-        return {"text": self.text, "input_tokens": 10, "output_tokens": 5}
+        return {
+            "text": self.text,
+            "duration_seconds": 12.0,
+            "language_code": "ita",
+            "speakers": ["speaker_0"],
+            "segments": [
+                {"speaker_id": "speaker_0", "start": 0.0, "end": 12.0,
+                 "text": self.text},
+            ],
+        }
 
 
 class FakeDescriber:
@@ -154,7 +163,7 @@ class VideoRoutingTests(unittest.TestCase):
     def _processor(self, tmp, **overrides):
         cfg = AppConfig(
             gemini_api_key="k",
-            mistral_api_key="k",
+            elevenlabs_api_key="k",
             run_ocr=True,
             run_extraction=False,
             output_formats=["markdown"],
@@ -200,7 +209,7 @@ class VideoRoutingTests(unittest.TestCase):
             path.write_bytes(_make_mp4(duration=30, timescale=1))
             cfg = AppConfig(
                 gemini_api_key="k",
-                mistral_api_key="k",
+                elevenlabs_api_key="k",
                 run_ocr=True,
                 run_extraction=False,
                 output_formats=["markdown"],

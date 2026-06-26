@@ -1,15 +1,16 @@
-"""Audio transcription via Mistral Voxtral Mini Transcribe V2."""
+"""Audio transcription via ElevenLabs Scribe v2 (batch Speech-to-Text)."""
 
 import logging
 import re
 import time
 from pathlib import Path
 
-from config.defaults import DEFAULT_TRANSCRIPTION_PROMPT
-
 logger = logging.getLogger(__name__)
 
-# Supported audio/video MIME types by extension
+DEFAULT_STT_MODEL = "scribe_v2"
+
+# Estensioni audio/video supportate (usate per il routing e la validazione).
+# ElevenLabs rileva da sé il content-type; la mappa resta per coerenza e test.
 AUDIO_MIME_TYPES: dict[str, str] = {
     ".mp3":  "audio/mpeg",
     ".wav":  "audio/wav",
@@ -30,15 +31,14 @@ class AudioTranscriberError(Exception):
 class AudioNotDecodableError(AudioTranscriberError):
     """Il file non contiene audio decodificabile (es. video WhatsApp muto).
 
-    Condizione attesa e benigna: l'API risponde 400 / code 3310
-    "could not be decoded". Va trattata come skip, non come errore.
+    Condizione attesa e benigna: va trattata come skip, non come errore.
     """
     pass
 
 
 def _format_timestamp(seconds: float) -> str:
     """Formatta secondi in mm:ss (o hh:mm:ss)."""
-    total = max(0, int(seconds))
+    total = max(0, int(seconds or 0))
     minutes, secs = divmod(total, 60)
     hours, minutes = divmod(minutes, 60)
     if hours > 0:
@@ -46,58 +46,106 @@ def _format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def _build_diarized_text(response) -> str:
-    """Crea un testo leggibile con speaker e timestamp per segmento."""
-    segments = getattr(response, "segments", None) or []
-    if not segments:
-        return getattr(response, "text", "") or ""
+def segments_from_words(words) -> list[dict]:
+    """Raggruppa le parole consecutive per speaker in turni di conversazione.
 
-    lines: list[str] = []
-    for seg in segments:
-        text = (getattr(seg, "text", "") or "").strip()
-        if not text:
+    ElevenLabs restituisce una lista di "words" con `text/start/end/type/speaker_id`
+    (type ∈ word|spacing|audio_event). Le spaziature si attaccano al turno corrente;
+    un cambio di `speaker_id` apre un nuovo turno.
+    Ritorna [{"speaker_id", "start", "end", "text"}].
+    """
+    segments: list[dict] = []
+    cur: dict | None = None
+    for w in words or []:
+        wtype = getattr(w, "type", "word") or "word"
+        text = getattr(w, "text", "") or ""
+        if wtype == "spacing":
+            if cur is not None:
+                cur["text"] += text
             continue
-        speaker = getattr(seg, "speaker_id", None) or "speaker_sconosciuto"
-        start = float(getattr(seg, "start", 0.0) or 0.0)
-        end = float(getattr(seg, "end", 0.0) or 0.0)
-        lines.append(
-            f"[{_format_timestamp(start)}-{_format_timestamp(end)}] {speaker}: {text}"
-        )
+        sid = getattr(w, "speaker_id", None) or "speaker_0"
+        start = getattr(w, "start", None)
+        end = getattr(w, "end", None)
+        if cur is None or sid != cur["speaker_id"]:
+            if cur is not None:
+                segments.append(cur)
+            cur = {"speaker_id": sid, "start": start, "end": end, "text": text}
+        else:
+            cur["text"] += text
+            if end is not None:
+                cur["end"] = end
+    if cur is not None:
+        segments.append(cur)
+    out = []
+    for s in segments:
+        s["text"] = s["text"].strip()
+        if s["text"]:
+            out.append(s)
+    return out
 
-    return "\n".join(lines) if lines else (getattr(response, "text", "") or "")
+
+def distinct_speakers(segments: list[dict]) -> list[str]:
+    """Speaker distinti nell'ordine di prima comparsa."""
+    seen: list[str] = []
+    for s in segments:
+        if s["speaker_id"] not in seen:
+            seen.append(s["speaker_id"])
+    return seen
+
+
+def build_transcript(segments: list[dict],
+                     speaker_labels: dict[str, str] | None = None) -> str:
+    """Compone il testo finale dai segmenti.
+
+    - Un solo speaker → testo piano (senza etichette/timestamp, più leggibile per
+      le note vocali).
+    - Più speaker → una riga `[mm:ss] <etichetta>: testo` per turno, applicando
+      eventuali etichette utente (speaker_0 → "Mario").
+    """
+    speaker_labels = speaker_labels or {}
+    speakers = distinct_speakers(segments)
+    if len(speakers) <= 1:
+        return " ".join(s["text"] for s in segments).strip()
+    lines = []
+    for s in segments:
+        label = speaker_labels.get(s["speaker_id"], s["speaker_id"])
+        ts = _format_timestamp(s["start"] or 0)
+        lines.append(f"[{ts}] {label}: {s['text']}")
+    return "\n".join(lines)
+
+
+def _status_code(exc: Exception) -> int | None:
+    code = getattr(exc, "status_code", None)
+    if isinstance(code, int):
+        return code
+    m = re.search(r"\b(\d{3})\b", str(exc))
+    return int(m.group(1)) if m else None
 
 
 def _is_rate_limit(exc: Exception) -> bool:
-    """Return True if the exception is an HTTP 429 rate-limit response."""
-    if getattr(exc, "status_code", None) == 429:
+    """True per un 429 (rate limit)."""
+    if _status_code(exc) == 429:
         return True
     msg = str(exc).lower()
-    return "429" in msg or "rate_limit" in msg or "rate limit" in msg
+    return "rate limit" in msg or "rate_limit" in msg
 
 
 def _is_non_retryable(exc: Exception) -> bool:
-    """True per errori client permanenti (4xx, escluso 429): ritentare è inutile.
+    """True per errori client permanenti (4xx, escluso 429 e affini).
 
-    Tipico: un video senza traccia audio decodibile → 400 "could not be decoded".
+    Ritentare un 401 (chiave non valida) o un 400 (file non valido) è inutile.
     """
-    code = getattr(exc, "status_code", None)
-    if isinstance(code, int):
+    code = _status_code(exc)
+    if code is not None:
         return 400 <= code < 500 and code not in (408, 409, 425, 429)
-    msg = str(exc).lower()
-    if "could not be decoded" in msg or "invalid_request" in msg:
-        return True
-    m = re.search(r"status\s+(\d{3})", msg)
-    if m:
-        c = int(m.group(1))
-        return 400 <= c < 500 and c != 429
     return False
 
 
 def _is_undecodable_audio(exc: Exception | None) -> bool:
     """True quando l'API rifiuta il file perché privo di audio decodificabile.
 
-    Tipico dei video WhatsApp senza traccia audio (es. GIF salvate come .mp4):
-    Mistral risponde 400 invalid_request_file / code 3310 "could not be decoded".
+    Tipico dei video senza traccia audio (es. GIF salvate come .mp4). Copre sia i
+    messaggi ElevenLabs sia, per retro-compatibilità, quelli storici di Mistral.
     """
     if exc is None:
         return False
@@ -108,15 +156,24 @@ def _is_undecodable_audio(exc: Exception | None) -> bool:
         "could not be decoded" in msg
         or "invalid_request_file" in msg
         or '"code":"3310"' in msg
+        or "no audio" in msg
+        or "could not detect any audio" in msg
+        or "no speech" in msg
     )
 
 
 def _retry_after_seconds(exc: Exception) -> float | None:
-    """Retry-After dall'errore Mistral (SDKError espone .headers)."""
+    """Estrae l'header Retry-After dall'errore, se presente."""
     headers = getattr(exc, "headers", None)
-    if headers is None:
+    if not headers:
+        body = getattr(exc, "body", None)
+        headers = getattr(body, "headers", None)
+    if not headers:
         return None
-    raw = headers.get("retry-after") or headers.get("Retry-After")
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+    except AttributeError:
+        return None
     if not raw:
         return None
     try:
@@ -126,49 +183,28 @@ def _retry_after_seconds(exc: Exception) -> float | None:
 
 
 class AudioTranscriber:
-    """Transcribes audio files using Mistral Voxtral Mini Transcribe V2."""
+    """Transcribes audio/video files using ElevenLabs Scribe v2 (batch STT)."""
 
-    def __init__(
-        self,
-        api_key: str,
-        model_id: str = "voxtral-mini-2602",
-        transcription_prompt: str = DEFAULT_TRANSCRIPTION_PROMPT,
-    ):
-        from mistralai import Mistral
-        from mistralai.utils import BackoffStrategy, RetryConfig
+    def __init__(self, api_key: str, model_id: str = DEFAULT_STT_MODEL):
+        from elevenlabs.client import ElevenLabs
 
-        # Senza retry_config l'SDK non ritenta i 429: una sola richiesta e stop.
-        backoff = BackoffStrategy(
-            initial_interval=1_000,
-            max_interval=120_000,
-            exponent=1.5,
-            max_elapsed_time=600_000,
-        )
-        sdk_retry = RetryConfig(
-            strategy="backoff",
-            backoff=backoff,
-            retry_connection_errors=True,
-        )
-        self.client = Mistral(api_key=api_key, retry_config=sdk_retry)
+        self.client = ElevenLabs(api_key=api_key)
         self.model_id = model_id
-        # Manteniamo il campo per compatibilità col config preesistente.
-        self.transcription_prompt = transcription_prompt
 
     def transcribe(self, audio_path: Path) -> dict:
-        """Transcribe an audio or video file via Voxtral Mini Transcribe V2.
-
-        Args:
-            audio_path: Path to the file (MP3, WAV, FLAC, M4A, OGG, MP4).
+        """Transcribe an audio or video file via ElevenLabs Scribe v2.
 
         Returns:
             {
-                "text": str,
-                "input_tokens": int,
-                "output_tokens": int,
+                "text": str,                # trascrizione (piana o diarizzata)
+                "duration_seconds": float,  # durata audio (per il costo)
+                "language_code": str,
+                "speakers": list[str],      # speaker distinti (per la diarization)
+                "segments": list[dict],     # [{"speaker_id","start","end","text"}]
             }
 
         Raises:
-            AudioTranscriberError: If the API call fails or the file is unsupported.
+            AudioTranscriberError / AudioNotDecodableError: in caso di errore.
         """
         suffix = audio_path.suffix.lower()
         if suffix not in AUDIO_MIME_TYPES:
@@ -183,27 +219,30 @@ class AudioTranscriber:
         )
 
         def do_transcribe():
+            # Riapre il file a ogni tentativo (niente intero blob in RAM,
+            # compatibile col retry per i 429/5xx).
             with audio_path.open("rb") as audio_file:
-                response = self.client.audio.transcriptions.complete(
-                    model=self.model_id,
-                    file={
-                        "content": audio_file,
-                        "file_name": audio_path.name,
-                        "content_type": AUDIO_MIME_TYPES[suffix],
-                    },
-                    diarize=True,
-                    timestamp_granularities=["segment"],
-                    timeout_ms=600_000,
+                response = self.client.speech_to_text.convert(
+                    file=audio_file,
+                    model_id=self.model_id,
+                    diarize=True,           # annota chi parla
+                    tag_audio_events=True,  # tagga risate/applausi ecc.
+                    # language_code omesso → rilevamento automatico
                 )
 
-            text = _build_diarized_text(response)
-            usage = getattr(response, "usage", None)
-            input_tokens = getattr(usage, "prompt_tokens", 0) or 0
-            output_tokens = getattr(usage, "completion_tokens", 0) or 0
+            words = getattr(response, "words", None) or []
+            segments = segments_from_words(words)
+            speakers = distinct_speakers(segments)
+            text = build_transcript(segments)
+            if not text:
+                text = (getattr(response, "text", "") or "").strip()
+            duration = float(getattr(response, "audio_duration_secs", 0.0) or 0.0)
             return {
                 "text": text,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
+                "duration_seconds": duration,
+                "language_code": getattr(response, "language_code", "") or "",
+                "speakers": speakers,
+                "segments": segments,
             }
 
         last_exc: Exception | None = None
@@ -212,9 +251,10 @@ class AudioTranscriber:
             try:
                 result = do_transcribe()
                 logger.info(
-                    "Trascrizione completata: '%s' – %d caratteri, %d+%d token",
+                    "Trascrizione completata: '%s' – %d caratteri, %.1fs audio, "
+                    "%d speaker",
                     audio_path.name, len(result["text"]),
-                    result["input_tokens"], result["output_tokens"],
+                    result["duration_seconds"], len(result["speakers"]),
                 )
                 return result
             except AudioTranscriberError:

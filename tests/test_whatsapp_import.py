@@ -390,7 +390,7 @@ class UndecodableAudioTests(unittest.TestCase):
         from pipeline.attachment_processor import AttachmentProcessor
 
         class StubTranscriber:
-            model_id = "voxtral-mini-2602"
+            model_id = "scribe_v2"
 
             def transcribe(self, _path):
                 raise AudioNotDecodableError("Nessuna traccia audio decodificabile")

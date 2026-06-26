@@ -6,7 +6,7 @@ Guida rapida per chi (umano o agente) lavora su questo repository.
 App desktop **Windows in Python puro** (CustomTkinter) che converte documenti
 eterogenei in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`),
 archivi, firmati `.p7m` e **conversazioni WhatsApp**. Usa OCR (Google Gemini),
-trascrizione audio (Mistral Voxtral) ed estrazione strutturata opzionale
+trascrizione audio (ElevenLabs Scribe v2, con diarization) ed estrazione strutturata opzionale
 (LangExtract). Nessun runtime Node/JS.
 
 ## Avvio, test, build
@@ -63,7 +63,7 @@ fallisce (`check_failed_technically`, nessun blocco della conversione).
 
 ## Descrizione visiva dei video
 Un video (`VIDEO_EXTENSIONS`: `.mp4 .mov .m4v .mkv .webm .avi`) produce UN solo MD
-con due sezioni separate: `## Trascrizione audio` (Voxtral) + `## Descrizione
+con due sezioni separate: `## Trascrizione audio` (ElevenLabs) + `## Descrizione
 visiva` (Gemini, riusa `ocr_model_id`). Opzionale via `config.video_describe`.
 - **L'audio viene RIMOSSO prima dell'upload a Gemini** (`utils/ffmpeg_tools.strip_audio`,
   remux `-c copy -an`): altrimenti contamina la descrizione (il modello "sente" un

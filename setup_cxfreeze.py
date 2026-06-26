@@ -54,7 +54,7 @@ build_exe_options = {
         "PIL._tkinter_finder",
         "dotenv",
         "tkinterdnd2",
-        "mistralai",
+        "elevenlabs",
         # WhatsApp import: decifratura backup + dipendenze crittografiche
         "wa_crypt_tools",
         "Cryptodome",

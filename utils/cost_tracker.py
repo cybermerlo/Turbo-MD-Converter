@@ -11,6 +11,7 @@ class CallRecord:
     input_tokens: int
     output_tokens: int
     phase: str  # "ocr", "extraction", "transcription", "video" or "final_check"
+    duration_seconds: float = 0.0  # per i modelli tariffati a ora (es. Scribe STT)
 
 
 class CostTracker:
@@ -20,13 +21,18 @@ class CostTracker:
         self._calls: list[CallRecord] = []
 
     def add_call(self, model_id: str, input_tokens: int, output_tokens: int,
-                 phase: str = "ocr") -> None:
-        """Record a single API call."""
+                 phase: str = "ocr", duration_seconds: float = 0.0) -> None:
+        """Record a single API call.
+
+        `duration_seconds` è usato solo dai modelli tariffati a ora (Scribe STT);
+        per i modelli a token resta 0.
+        """
         self._calls.append(CallRecord(
             model_id=model_id,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             phase=phase,
+            duration_seconds=duration_seconds,
         ))
 
     def get_totals(self) -> dict:
@@ -88,6 +94,7 @@ class CostTracker:
                 input_tokens=call.input_tokens,
                 output_tokens=call.output_tokens,
                 phase=call.phase,
+                duration_seconds=call.duration_seconds,
             )
 
     def _compute_cost(self, calls: list[CallRecord]) -> float:
@@ -97,6 +104,8 @@ class CostTracker:
         pricing = PRICING.get(call.model_id)
         if not pricing:
             return 0.0
+        if "per_hour" in pricing:
+            return (call.duration_seconds / 3600.0) * pricing["per_hour"]
         input_cost = (call.input_tokens / 1_000_000) * pricing["input_per_1m"]
         output_cost = (call.output_tokens / 1_000_000) * pricing["output_per_1m"]
         return input_cost + output_cost

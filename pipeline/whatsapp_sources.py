@@ -2,7 +2,7 @@
 
 Specchio di `pipeline/email_sources.py`: il corpo (transcript.txt) viene unito ai
 contenuti dei media, ognuno convertito in testo tramite `process_attachment`
-(immagini → OCR Gemini, note vocali → trascrizione Mistral). Tutto inline, in
+(immagini → OCR Gemini, note vocali → trascrizione ElevenLabs). Tutto inline, in
 ordine cronologico → una sola stringa → un solo Markdown.
 """
 

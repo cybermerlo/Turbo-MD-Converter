@@ -76,7 +76,7 @@ class AttachmentProcessor:
                 if not self.audio_transcriber:
                     self.emit_log(
                         f"Audio '{att_path.name}' saltato: "
-                        f"chiave API Mistral non configurata",
+                        f"chiave API ElevenLabs non configurata",
                         "WARNING",
                     )
                     return ""

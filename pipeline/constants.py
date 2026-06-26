@@ -3,7 +3,7 @@
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif")
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4", ".opus")
 # Video veri e propri: vengono instradati al percorso "video" (trascrizione audio
-# Voxtral + descrizione visiva Gemini), che ha precedenza sull'audio puro. Nota
+# ElevenLabs + descrizione visiva Gemini), che ha precedenza sull'audio puro. Nota
 # che ".mp4" è anche in AUDIO_EXTENSIONS: il routing video lo intercetta prima.
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi")
 ARCHIVE_EXTENSIONS = (".zip", ".7z", ".tar", ".tgz")

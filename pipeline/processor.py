@@ -64,8 +64,8 @@ class DocumentProcessor:
         self.ocr_pipeline = OCRPipeline(config, self.cost_tracker)
 
         self.audio_transcriber = (
-            AudioTranscriber(config.mistral_api_key)
-            if config.mistral_api_key else None
+            AudioTranscriber(config.elevenlabs_api_key)
+            if config.elevenlabs_api_key else None
         )
 
         # Descrizione visiva dei video: riusa il modello scelto per l'OCR.
@@ -276,7 +276,7 @@ class DocumentProcessor:
         if not self.audio_transcriber:
             self._fail(
                 pdf_path,
-                "Chiave API Mistral non configurata. "
+                "Chiave API ElevenLabs non configurata. "
                 "Inseriscila nelle Impostazioni → tab API.",
             )
             return None
@@ -298,16 +298,17 @@ class DocumentProcessor:
 
         self.cost_tracker.add_call(
             model_id=self.audio_transcriber.model_id,
-            input_tokens=trans_result["input_tokens"],
-            output_tokens=trans_result["output_tokens"],
+            input_tokens=0,
+            output_tokens=0,
             phase="transcription",
+            duration_seconds=trans_result.get("duration_seconds", 0.0),
         )
         ocr_result = self._make_ocr_result_from_text(pdf_path, trans_result["text"])
         self.emit(LogEvent(
             message=(
                 f"Trascrizione audio completata: "
                 f"{len(trans_result['text']):,} caratteri, "
-                f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
+                f"{trans_result.get('duration_seconds', 0.0):.0f}s audio"
             )
         ))
         return ocr_result, False, False
@@ -317,7 +318,7 @@ class DocumentProcessor:
         pdf_path: Path,
         cancel_event: threading.Event,
     ) -> tuple[OCRResult, bool, bool] | None:
-        """Video → trascrizione audio (Voxtral) + descrizione visiva (Gemini).
+        """Video → trascrizione audio (ElevenLabs) + descrizione visiva (Gemini).
 
         Le due parti finiscono in un unico MD con due sezioni separate. La
         descrizione visiva è opzionale (config.video_describe) e viene saltata per
@@ -337,15 +338,16 @@ class DocumentProcessor:
                 audio_text = trans_result["text"]
                 self.cost_tracker.add_call(
                     model_id=self.audio_transcriber.model_id,
-                    input_tokens=trans_result["input_tokens"],
-                    output_tokens=trans_result["output_tokens"],
+                    input_tokens=0,
+                    output_tokens=0,
                     phase="transcription",
+                    duration_seconds=trans_result.get("duration_seconds", 0.0),
                 )
                 self.emit(LogEvent(
                     message=(
                         f"Trascrizione audio completata: "
                         f"{len(audio_text):,} caratteri, "
-                        f"{trans_result['input_tokens'] + trans_result['output_tokens']:,} token"
+                        f"{trans_result.get('duration_seconds', 0.0):.0f}s audio"
                     )
                 ))
             except AudioNotDecodableError:
@@ -363,7 +365,7 @@ class DocumentProcessor:
                 ))
         else:
             self.emit(LogEvent(
-                message="Chiave API Mistral non configurata: niente trascrizione audio del video",
+                message="Chiave API ElevenLabs non configurata: niente trascrizione audio del video",
                 level="WARNING",
             ))
 

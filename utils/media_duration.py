@@ -115,6 +115,10 @@ _EBML_SEGMENT = 0x18538067
 _EBML_INFO = 0x1549A966
 _EBML_TIMECODE_SCALE = 0x2AD7B1
 _EBML_DURATION = 0x4489
+# TimecodeScale (uint) e Duration (float) sono scalari ≤ 8 byte: oltre questo è
+# un file corrotto/malevolo e non va letto in memoria (un elem_size enorme
+# causerebbe un read da gigabyte).
+_EBML_MAX_SCALAR_BYTES = 8
 
 
 def _ebml_duration(path: Path) -> float | None:
@@ -143,12 +147,16 @@ def _ebml_duration(path: Path) -> float | None:
             if elem_size is None:
                 break
             data_start = pos + id_len + size_len
-            f.seek(data_start)
-            raw = f.read(elem_size)
-            if elem_id == _EBML_TIMECODE_SCALE:
-                timecode_scale = int.from_bytes(raw, "big") or timecode_scale
-            elif elem_id == _EBML_DURATION:
-                duration_val = _read_ebml_float(raw)
+            # Legge solo i due scalari che ci servono, e solo se di dimensione
+            # plausibile; gli altri elementi vengono saltati senza leggerli.
+            if elem_id in (_EBML_TIMECODE_SCALE, _EBML_DURATION) and \
+                    0 < elem_size <= _EBML_MAX_SCALAR_BYTES:
+                f.seek(data_start)
+                raw = f.read(elem_size)
+                if elem_id == _EBML_TIMECODE_SCALE:
+                    timecode_scale = int.from_bytes(raw, "big") or timecode_scale
+                else:
+                    duration_val = _read_ebml_float(raw)
             pos = data_start + elem_size
 
         if duration_val is None:

@@ -419,6 +419,10 @@ class InputFrame(ctk.CTkFrame):
         if paths:
             for p in paths:
                 path = Path(p)
+                # Coerente con add_paths/clipboard: il filtro "Tutti i file" non
+                # deve far entrare estensioni non supportate (fallirebbero a valle).
+                if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                    continue
                 if path not in self._file_paths:
                     self._file_paths.append(path)
             self._refresh_list()

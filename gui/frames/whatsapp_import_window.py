@@ -192,6 +192,7 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         self._package_path: Path | None = None
         self._busy = False
         self._cancel = threading.Event()
+        self._closed = False
 
         # ── Scaffold: header · body · status · footer ────────────────────
         self.title_lbl = ctk.CTkLabel(
@@ -252,15 +253,30 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         self.subtitle_lbl.configure(text=subtitle)
 
     def _set_status(self, text: str, level: str = "info") -> None:
+        if self._closed or not self.winfo_exists():
+            return
         color = {
             "info": theme.INK_2, "ok": "#2a5e36",
             "warn": "#7a5418", "err": theme.ERR,
         }.get(level, theme.INK_2)
         self.status_lbl.configure(text=text, text_color=color)
 
+    def _safe_after(self, fn) -> None:
+        """Marshalla `fn` sul thread UI; no-op se la finestra è già chiusa.
+
+        Senza questa guardia, un thread di lavoro ancora attivo dopo `_on_close`
+        chiamerebbe `self.after(...)` su un widget distrutto → TclError.
+        """
+        if self._closed:
+            return
+        try:
+            self.after(0, fn)
+        except Exception:
+            pass
+
     def _post_status(self, text: str, level: str = "info") -> None:
         """Aggiorna lo stato dal thread di lavoro."""
-        self.after(0, lambda: self._set_status(text, level))
+        self._safe_after(lambda: self._set_status(text, level))
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -279,13 +295,15 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
             try:
                 result = fn()
             except Exception as e:  # marshalled to UI thread
-                self.after(0, lambda err=e: self._bg_finish(on_error, err, True))
+                self._safe_after(lambda err=e: self._bg_finish(on_error, err, True))
                 return
-            self.after(0, lambda res=result: self._bg_finish(on_success, res, False))
+            self._safe_after(lambda res=result: self._bg_finish(on_success, res, False))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _bg_finish(self, cb, arg, is_error: bool) -> None:
+        if self._closed or not self.winfo_exists():
+            return
         self._set_busy(False)
         if cb is None:
             if is_error:
@@ -879,6 +897,7 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         return candidate
 
     def _on_close(self) -> None:
+        self._closed = True
         self._cancel.set()
         try:
             self.grab_release()

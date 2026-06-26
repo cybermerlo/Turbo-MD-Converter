@@ -37,13 +37,28 @@ def _format_size(num_bytes: int) -> str:
     return f"{n:.1f} GB"
 
 
+# Cache del conteggio pagine PDF, per (path, mtime, size): aprire un PDF con
+# PyMuPDF sul thread UI è costoso e le righe vengono ricostruite spesso.
+_PDF_PAGES_CACHE: dict[tuple[str, int, int], int | None] = {}
+
+
 def _count_pdf_pages(path: Path) -> int | None:
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and key in _PDF_PAGES_CACHE:
+        return _PDF_PAGES_CACHE[key]
     try:
         import fitz  # PyMuPDF
         with fitz.open(str(path)) as doc:
-            return doc.page_count
+            pages = doc.page_count
     except Exception:
-        return None
+        pages = None
+    if key is not None:
+        _PDF_PAGES_CACHE[key] = pages
+    return pages
 
 
 def _normalise_candidate_path(raw: str) -> Path | None:
@@ -164,6 +179,9 @@ class _FileRow(ctk.CTkFrame):
         self._status = "queue"
         self._cost = 0.0
         self._selected = False
+        # Parte immutabile della meta (dimensione + n. pagine): calcolata una
+        # sola volta. set_cost aggiorna solo il costo, senza ri-aprire il PDF.
+        self._meta_base = self._compute_meta_base()
 
         ext = path.suffix.lower()
         badge_key = theme.EXT_TO_BADGE.get(ext, "TXT")
@@ -212,17 +230,21 @@ class _FileRow(ctk.CTkFrame):
     def path(self) -> Path:
         return self._path
 
-    def _meta_text(self) -> str:
+    def _compute_meta_base(self) -> list[str]:
+        """Dimensione file + (per i PDF) numero pagine. Parte immutabile, una volta."""
         bits = []
         try:
             bits.append(_format_size(self._path.stat().st_size))
         except Exception:
             pass
-        ext = self._path.suffix.lower()
-        if ext == ".pdf":
+        if self._path.suffix.lower() == ".pdf":
             pages = _count_pdf_pages(self._path)
             if pages is not None:
                 bits.append(f"{pages} pag.")
+        return bits
+
+    def _meta_text(self) -> str:
+        bits = list(self._meta_base)
         if self._cost > 0:
             bits.append(f"${self._cost:.4f}")
         return "  ·  ".join(bits)

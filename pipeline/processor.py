@@ -46,6 +46,7 @@ from pipeline.events import (
 from pipeline.models import EmailAttachmentDocument
 from pipeline.rename_coordinator import RenameCoordinator, attachment_output_stem
 from utils.cost_tracker import CostTracker
+from utils.ffmpeg_tools import _safe_unlink, extract_audio_track
 from utils.media_duration import probe_duration_seconds
 
 logger = logging.getLogger(__name__)
@@ -354,8 +355,12 @@ class DocumentProcessor:
                     f"[{self.audio_transcriber.model_id}]"
                 )
             ))
+            # Per i video carichiamo solo la traccia audio (16 kHz mono): l'upload
+            # è molto più leggero. Se ffmpeg manca, ripieghiamo sul file originale.
+            audio_only = extract_audio_track(pdf_path)
+            transcribe_src = audio_only or pdf_path
             try:
-                trans_result = self.audio_transcriber.transcribe(pdf_path)
+                trans_result = self.audio_transcriber.transcribe(transcribe_src)
                 audio_text = trans_result["text"]
                 self.cost_tracker.add_call(
                     model_id=self.audio_transcriber.model_id,
@@ -385,6 +390,9 @@ class DocumentProcessor:
                     message=f"Trascrizione audio non riuscita ({e}): proseguo col solo visivo",
                     level="WARNING",
                 ))
+            finally:
+                if audio_only:
+                    _safe_unlink(audio_only)
         else:
             self.emit(LogEvent(
                 message="Chiave API ElevenLabs non configurata: niente trascrizione audio del video",

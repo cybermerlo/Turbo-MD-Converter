@@ -93,6 +93,47 @@ def strip_audio(src: Path, timeout_s: float = 120.0) -> Path | None:
     return tmp_path
 
 
+def extract_audio_track(src: Path, timeout_s: float = 300.0) -> Path | None:
+    """Estrae la sola traccia audio di ``src`` in un m4a 16 kHz mono.
+
+    Per i video evita di caricare l'intero file alla trascrizione (il flusso
+    video è inutile per lo speech-to-text) e 16 kHz mono è il formato ideale per
+    lo STT. I timestamp restano allineati all'originale (nessun taglio), quindi
+    gli spezzoni audio per l'identificazione interlocutori funzionano sul file di
+    partenza. Ritorna il Path del temporaneo, o None se ffmpeg manca / non c'è
+    audio decodificabile (il chiamante ripiega sul file originale).
+    """
+    exe = get_ffmpeg_exe()
+    if not exe:
+        return None
+
+    fd, tmp = tempfile.mkstemp(suffix=".m4a", prefix="turbomd_audio_")
+    os.close(fd)
+    tmp_path = Path(tmp)
+
+    cmd = [
+        exe, "-y", "-loglevel", "error",
+        "-i", str(src),
+        "-vn",                       # scarta il video
+        "-ac", "1", "-ar", "16000",  # mono 16 kHz (ottimale per STT)
+        "-c:a", "aac", "-b:a", "64k",
+        str(tmp_path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, encoding="utf-8", errors="replace",
+            timeout=timeout_s, **_no_window_kwargs(),
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning("Estrazione traccia audio fallita per '%s': %s", src.name, e)
+        _safe_unlink(tmp_path)
+        return None
+    if proc.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
+        _safe_unlink(tmp_path)
+        return None
+    return tmp_path
+
+
 def extract_audio_segment(
     src: Path, start: float, end: float, timeout_s: float = 60.0,
 ) -> Path | None:

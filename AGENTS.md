@@ -66,7 +66,9 @@ La trascrizione audio/video usa **ElevenLabs Scribe v2** (`ocr/audio_transcriber
 `speech_to_text.convert(model_id="scribe_v2", diarize=True)`), tariffata **a ora**
 (`PRICING["scribe_v2"]["per_hour"]`, costo da `audio_duration_secs`). Le `words`
 diventano turni per speaker (`segments_from_words`/`build_transcript`): testo piano
-per un solo interlocutore, righe `[mm:ss] speaker_X: …` se più di uno.
+per un solo interlocutore, righe `[mm:ss] speaker_X: …` se più di uno. Per i **video**
+si carica solo la traccia audio estratta a 16 kHz mono (`ffmpeg_tools.extract_audio_track`,
+upload molto più leggero; fallback al file originale se ffmpeg manca).
 
 Default-on (`config.identify_speakers`): se un file ha **più speaker**, il processor
 emette `SpeakerDiarizationEvent` (chiave `input_path`, segue le rinomine). A fine

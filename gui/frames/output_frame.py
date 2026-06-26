@@ -553,10 +553,15 @@ class OutputFrame(ctk.CTkFrame):
         self._combined_editor_window = MarkdownEditorWindow(self, path)
 
     def _open_output_folder(self) -> None:
-        if self._output_dir and self._output_dir.exists():
+        if not (self._output_dir and self._output_dir.exists()):
+            return
+        try:
             if sys.platform == "win32":
                 subprocess.Popen(["explorer", str(self._output_dir)])
             elif sys.platform == "darwin":
                 subprocess.Popen(["open", str(self._output_dir)])
             else:
                 subprocess.Popen(["xdg-open", str(self._output_dir)])
+        except OSError:
+            # Es. 'xdg-open' assente su una minimale installazione Linux.
+            pass

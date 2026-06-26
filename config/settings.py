@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from config.defaults import DEFAULT_OCR_MODEL
+from utils import secret_store
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,8 @@ class AppConfig:
     # Importazione WhatsApp (Android via adb + backup locale cifrato).
     whatsapp_backup_key: str = ""   # 64 cifre esadecimali del backup E2E
     adb_path: str = ""              # override percorso adb.exe (vuoto = bundle/PATH)
+    # Geometria finestra ("LxA+X+Y") ripristinata all'avvio, salvata alla chiusura.
+    window_geometry: str = ""
 
     def reset_cartella_if_one_shot(self) -> bool:
         """Revert cartella output mode after a batch when one-shot is enabled."""
@@ -130,6 +133,13 @@ def load_config(config_path: Path | None = None,
 
     config.ocr_model_id = normalize_ocr_model(config.ocr_model_id)
     config.extraction_model_id = normalize_ocr_model(config.extraction_model_id)
+    # Segreti dal keyring di sistema (DPAPI su Windows): se presenti vincono sul
+    # valore del JSON, che resta solo come fallback legacy finché non si risalva.
+    for field_name in secret_store.SECRET_FIELDS:
+        stored = secret_store.get_secret(field_name)
+        if stored:
+            setattr(config, field_name, stored)
+
     if not config.output_formats:
         config.output_formats = ["markdown"]
     else:
@@ -153,11 +163,22 @@ def load_config(config_path: Path | None = None,
 
 
 def save_config(config: AppConfig, config_path: Path | None = None) -> None:
-    """Save config to JSON file, compresa la chiave API."""
+    """Salva la config su JSON; i segreti vanno nel keyring quando disponibile.
+
+    I campi in ``secret_store.SECRET_FIELDS`` (chiavi API, chiave backup WhatsApp)
+    vengono memorizzati nel Credential Manager di sistema; nel JSON si scrive una
+    stringa vuota al loro posto. Se il keyring non è disponibile, il valore resta
+    nel JSON come prima (fallback in chiaro).
+    """
     path = config_path or get_config_path()
     data = asdict(config)
-    # L'API key ora viene salvata nel config.json locale in AppData
-    # affinché l'eseguibile ne mantenga la memoria.
+
+    # Sposta i segreti nel keyring; azzera nel JSON solo quelli effettivamente
+    # archiviati (così non si perde nulla quando il keyring non c'è).
+    for field_name in secret_store.SECRET_FIELDS:
+        value = data.get(field_name, "")
+        if secret_store.set_secret(field_name, value):
+            data[field_name] = ""
 
     path.parent.mkdir(parents=True, exist_ok=True)
     # Scrittura atomica: serializza su un file temporaneo nella stessa cartella e

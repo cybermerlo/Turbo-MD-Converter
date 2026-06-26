@@ -3,6 +3,7 @@
 from __future__ import annotations
 import os
 import queue
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -45,6 +46,8 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
         self.geometry("1380x840")
         self.minsize(1180, 680)
+        self._restore_window_geometry()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.configure(fg_color=theme.PAPER)
 
         self.config = config
@@ -74,6 +77,33 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
         if initial_files:
             self.after(100, lambda: self.input_frame.add_paths(initial_files))
         self.after(500, self._check_sendto_shortcut)
+
+    # ─── Window geometry persistence ─────────────────────────────────────────
+    def _restore_window_geometry(self) -> None:
+        """Ripristina dimensione/posizione salvate, mantenendo la finestra a
+        schermo (in caso di monitor scollegato o risoluzione cambiata)."""
+        geo = (getattr(self.config, "window_geometry", "") or "").strip()
+        m = re.fullmatch(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", geo)
+        if not m:
+            return
+        try:
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        except Exception:
+            return
+        w = min(max(int(m.group(1)), 1180), sw)
+        h = min(max(int(m.group(2)), 680), sh)
+        x = min(max(int(m.group(3)), 0), max(0, sw - 100))
+        y = min(max(int(m.group(4)), 0), max(0, sh - 100))
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _on_close(self) -> None:
+        """Salva la geometria corrente e chiude la finestra."""
+        try:
+            self.config.window_geometry = self.geometry()
+            save_config(self.config)
+        except Exception:
+            pass
+        self.destroy()
 
     # ─── Layout ──────────────────────────────────────────────────────────────
     def _build_layout(self) -> None:

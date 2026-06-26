@@ -11,6 +11,17 @@ from config.defaults import DEFAULT_OCR_MODEL, DEFAULT_OCR_PROMPT
 from config.settings import AppConfig, load_config, save_config
 
 
+def setUpModule():
+    # Questi test verificano la persistenza/normalizzazione del JSON: disabilita
+    # il keyring così i segreti restano nel JSON in modo deterministico (e i test
+    # non scrivono nel Credential Manager reale della macchina).
+    os.environ["TURBOMD_DISABLE_KEYRING"] = "1"
+
+
+def tearDownModule():
+    os.environ.pop("TURBOMD_DISABLE_KEYRING", None)
+
+
 class SaveLoadRoundTripTests(unittest.TestCase):
     def test_round_trip_preserves_values(self):
         with tempfile.TemporaryDirectory() as tmpdir:

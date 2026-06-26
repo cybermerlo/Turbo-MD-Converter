@@ -1,0 +1,5 @@
+# Dipendenze necessarie SOLO per costruire l'installer Windows
+# (cx_Freeze impacchetta l'app, Inno Setup va installato a parte).
+# Le dipendenze di runtime restano in requirements.txt.
+-r requirements.txt
+cx_Freeze>=6.15

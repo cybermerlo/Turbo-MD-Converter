@@ -7,8 +7,15 @@ Questo approccio (build “a cartella”, non “onefile”) tende a ridurre div
 ## Prerequisiti
 
 - **Python** installato su Windows (versione compatibile con il progetto)
-- Dipendenze installabili dal progetto
 - **Inno Setup** installato (serve `ISCC.exe`)
+- Dipendenze di build installate dalla root del progetto:
+
+  ```powershell
+  pip install -r requirements-build.txt
+  ```
+
+  (include `requirements.txt` più `cx_Freeze`; `requirements.txt` da solo non basta
+  per la build perché cx_Freeze è una dipendenza di sola costruzione.)
 
 ## Build completa (consigliata)
 

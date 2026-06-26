@@ -98,26 +98,26 @@ begin
     'Configura l''accesso all''intelligenza artificiale',
     'Turbo MD Converter usa due servizi AI:' + #13#10 +
     '  • Google Gemini – per OCR e estrazione dati (aistudio.google.com/apikey)' + #13#10 +
-    '  • Mistral Voxtral – per la trascrizione di file audio (console.mistral.ai)' + #13#10#13#10 +
+    '  • ElevenLabs Scribe – per la trascrizione di file audio/video (elevenlabs.io)' + #13#10#13#10 +
     'Puoi lasciare vuoto e inserire le chiavi in seguito dalle Impostazioni dell''app.'
   );
   ApiKeyPage.Add('Chiave API Gemini:', True);
-  ApiKeyPage.Add('Chiave API Mistral (opzionale):', True);
+  ApiKeyPage.Add('Chiave API ElevenLabs (opzionale):', True);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ConfigDir, ConfigFile, GeminiKey, MistralKey, Json: string;
-  HasGemini, HasMistral: Boolean;
+  ConfigDir, ConfigFile, GeminiKey, ElevenLabsKey, Json: string;
+  HasGemini, HasElevenLabs: Boolean;
 begin
   if CurStep <> ssPostInstall then Exit;
 
-  GeminiKey  := Trim(ApiKeyPage.Values[0]);
-  MistralKey := Trim(ApiKeyPage.Values[1]);
-  HasGemini  := GeminiKey <> '';
-  HasMistral := MistralKey <> '';
+  GeminiKey     := Trim(ApiKeyPage.Values[0]);
+  ElevenLabsKey := Trim(ApiKeyPage.Values[1]);
+  HasGemini     := GeminiKey <> '';
+  HasElevenLabs := ElevenLabsKey <> '';
 
-  if not HasGemini and not HasMistral then Exit;
+  if not HasGemini and not HasElevenLabs then Exit;
 
   ConfigDir  := ExpandConstant('{userappdata}\OCRLangExtract');
   ConfigFile := ConfigDir + '\config.json';
@@ -134,13 +134,13 @@ begin
     begin
       Json := Json + '  "gemini_api_key": "' + GeminiKey + '",' + #13#10;
       Json := Json + '  "langextract_api_key": "' + GeminiKey + '"';
-      if HasMistral then
+      if HasElevenLabs then
         Json := Json + ',' + #13#10
       else
         Json := Json + #13#10;
     end;
-    if HasMistral then
-      Json := Json + '  "mistral_api_key": "' + MistralKey + '"' + #13#10;
+    if HasElevenLabs then
+      Json := Json + '  "elevenlabs_api_key": "' + ElevenLabsKey + '"' + #13#10;
     Json := Json + '}';
     SaveStringToFile(ConfigFile, Json, False);
   end;

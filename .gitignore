@@ -29,3 +29,8 @@ output/*
 
 # File generati dall'installer
 installer/output/
+# version.iss è rigenerato da build_installer.py (contiene path e versione locali)
+installer/version.iss
+
+# Stato di build incrementale, riscritto a ogni build (non è sorgente)
+build_info.json

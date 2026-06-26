@@ -11,7 +11,7 @@ from pathlib import Path
 from cx_Freeze import setup, Executable
 
 # Importa metadati centralizzati (aggiornati da build_installer.py)
-from version import APP_NAME, APP_EXE_NAME, APP_PUBLISHER, VERSION, VERSION_TUPLE
+from version import APP_NAME, APP_EXE_NAME, APP_PUBLISHER, VERSION
 
 sys.setrecursionlimit(5000)
 

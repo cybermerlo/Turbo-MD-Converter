@@ -10,6 +10,8 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
+from utils.text_utils import strip_json_fences
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +85,7 @@ def derive_filename_from_llm(
             model=model_id,
             contents=[types.Part.from_text(text=prompt)],
         )
-        raw = _strip_json_fences((response.text or "").strip())
+        raw = strip_json_fences((response.text or "").strip())
 
         data = json.loads(raw)
         date_str = str(data.get("data", "00000000")).strip()
@@ -165,7 +167,7 @@ def derive_batch_profiles_from_llm(
             model=model_id,
             contents=[types.Part.from_text(text=prompt)],
         )
-        raw = _strip_json_fences((response.text or "").strip())
+        raw = strip_json_fences((response.text or "").strip())
         data = json.loads(raw)
         docs = data.get("documents")
         if not isinstance(docs, list):
@@ -450,12 +452,6 @@ def _truncate_description(description: str, max_len: int) -> str:
     if len(description) <= max_len:
         return description
     return description[:max_len].rstrip(" .-")
-
-
-def _strip_json_fences(raw: str) -> str:
-    cleaned = re.sub(r"^```[a-z]*\s*", "", raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    return cleaned.strip()
 
 
 def _strip_leading_date_prefix(description: str) -> str:

@@ -27,7 +27,6 @@ from gui import theme
 from whatsapp.adb_bridge import (
     WA_SHARED_ROOT,
     AdbBridge,
-    AdbError,
 )
 from whatsapp.backup_decryptor import decrypt_msgstore
 from whatsapp.msgstore_reader import ChatSummary, MsgStoreReader

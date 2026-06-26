@@ -2,11 +2,12 @@
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 
 from google import genai
 from google.genai import types
+
+from utils.text_utils import strip_json_fences
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def run_final_error_check(
                 check_failed_technically=True,
             )
 
-        data = json.loads(_strip_json_fences(raw))
+        data = json.loads(strip_json_fences(raw))
         passed = bool(data.get("passed", False))
         issues_raw = data.get("issues", [])
         issues: list[dict] = []
@@ -124,9 +125,3 @@ def run_final_error_check(
             error_message=str(e),
             check_failed_technically=True,
         )
-
-
-def _strip_json_fences(raw: str) -> str:
-    cleaned = re.sub(r"^```[a-z]*\s*", "", raw, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    return cleaned.strip()

@@ -220,16 +220,6 @@ class OutputFrame(ctk.CTkFrame):
                 search = f"{e}+1c"
 
     # ─── Public API ───────────────────────────────────────────────────────
-    def get_output_formats(self) -> list[str]:
-        return ["markdown"]
-
-    def show_markdown(self, content: str) -> None:
-        self._current_md_path = None
-        self.title_lbl.configure(text="Anteprima")
-        self._fill_preview(content)
-        self.editor_btn.configure(state="disabled")
-        self.copy_btn.configure(state="normal")
-
     def show_markdown_file(self, md_path: Path) -> None:
         self._current_md_path = md_path
         try:
@@ -253,10 +243,6 @@ class OutputFrame(ctk.CTkFrame):
                        "del Markdown convertito qui.")
         self.md_textbox.insert("1.0", message, "placeholder")
         self.md_textbox.configure(state="disabled")
-
-    def refresh_current_preview(self) -> None:
-        if self._current_md_path and self._current_md_path.exists():
-            self.show_markdown_file(self._current_md_path)
 
     def open_markdown_preview(self) -> None:
         if not self._current_md_path or not self._current_md_path.exists():

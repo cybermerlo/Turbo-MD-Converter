@@ -533,9 +533,6 @@ class InputFrame(ctk.CTkFrame):
     def get_file_paths(self) -> list[Path]:
         return list(self._file_paths)
 
-    def get_pdf_paths(self) -> list[Path]:
-        return self.get_file_paths()
-
     def get_selected_path(self) -> Path | None:
         return self._selected_path
 

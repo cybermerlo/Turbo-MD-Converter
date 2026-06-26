@@ -25,7 +25,6 @@ WARN       = "#c08a3a"
 WARN_SOFT  = "#f3e8d3"
 ERR        = "#b04a36"
 ERR_SOFT   = "#f5e1dc"
-INFO       = "#4a6e9c"
 INFO_SOFT  = "#dee5ee"
 
 STATUS_COLORS = {
@@ -130,25 +129,11 @@ def amber_button(parent, text, command=None, **kwargs):
                          corner_radius=6, font=font(13, "bold"), **kwargs)
 
 
-def ink_button(parent, text, command=None, **kwargs):
-    return ctk.CTkButton(parent, text=text, command=command,
-                         fg_color=INK, hover_color="#000000",
-                         text_color=PAPER, border_width=0,
-                         corner_radius=6, font=font(13, "bold"), **kwargs)
-
-
 def ghost_button(parent, text, command=None, **kwargs):
     return ctk.CTkButton(parent, text=text, command=command,
                          fg_color=CARD, hover_color=PAPER_2,
                          text_color=INK, border_width=1, border_color=RULE,
                          corner_radius=6, font=font(12), **kwargs)
-
-
-def danger_button(parent, text, command=None, **kwargs):
-    return ctk.CTkButton(parent, text=text, command=command,
-                         fg_color=ERR, hover_color="#8c3a2a",
-                         text_color="#ffffff", border_width=0,
-                         corner_radius=6, font=font(13, "bold"), **kwargs)
 
 
 def soften_scrollbar(scrollbar, *, track_color=PAPER, thumb_color=RULE):
@@ -163,12 +148,6 @@ def soften_scrollbar(scrollbar, *, track_color=PAPER, thumb_color=RULE):
         )
     except Exception:
         pass
-
-
-def soften_scrollable_frame(scrollable_frame):
-    scrollbar = getattr(scrollable_frame, "_scrollbar", None)
-    if scrollbar is not None:
-        soften_scrollbar(scrollbar, track_color=PAPER, thumb_color=RULE)
 
 
 def autohide_scrollable_frame(scrollable_frame):

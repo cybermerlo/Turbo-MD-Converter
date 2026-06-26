@@ -1,6 +1,5 @@
 """Settings dialog window."""
 
-from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk
@@ -13,7 +12,7 @@ from config.defaults import (
     normalize_ocr_model,
 )
 from config.settings import AppConfig
-from extraction.schemas import get_schema_preset, get_available_schemas
+from extraction.schemas import get_schema_preset
 
 
 def _section_header(parent, text: str) -> None:

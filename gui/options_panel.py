@@ -1,7 +1,6 @@
 """Right-rail options panel — paper-themed, compact, with cost chart slot."""
 
 from __future__ import annotations
-from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter as ctk

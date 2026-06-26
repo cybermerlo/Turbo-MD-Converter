@@ -83,13 +83,6 @@ Testo OCR:
 ---
 """
 
-# Available audio transcription models
-AVAILABLE_AUDIO_MODELS = [
-    "voxtral-mini-2602",
-    "voxtral-mini-latest",
-    "voxtral-small-latest",
-]
-
 # Available OCR models (default first)
 DEFAULT_OCR_MODEL = "gemini-3.1-flash-lite"
 

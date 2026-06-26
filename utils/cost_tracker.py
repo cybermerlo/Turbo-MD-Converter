@@ -1,6 +1,6 @@
 """API cost tracking for Gemini calls."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from config.defaults import PRICING
 
 

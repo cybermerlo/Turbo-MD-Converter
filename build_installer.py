@@ -13,9 +13,7 @@ dove N si incrementa automaticamente ad ogni build dello stesso giorno.
 """
 
 import argparse
-import glob
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -334,7 +332,7 @@ def main():
     size_mb = installer.stat().st_size / (1024 * 1024)
     print()
     print("=" * 60)
-    print(f"  ✓  Installer pronto!")
+    print("  ✓  Installer pronto!")
     print(f"     {installer}")
     print(f"     Versione : {version}")
     print(f"     Dimensione: {size_mb:.1f} MB")

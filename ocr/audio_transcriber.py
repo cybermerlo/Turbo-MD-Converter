@@ -134,8 +134,8 @@ class AudioTranscriber:
         model_id: str = "voxtral-mini-2602",
         transcription_prompt: str = DEFAULT_TRANSCRIPTION_PROMPT,
     ):
-        from mistralai.client import Mistral
-        from mistralai.client.utils import BackoffStrategy, RetryConfig
+        from mistralai import Mistral
+        from mistralai.utils import BackoffStrategy, RetryConfig
 
         # Senza retry_config l'SDK non ritenta i 429: una sola richiesta e stop.
         backoff = BackoffStrategy(

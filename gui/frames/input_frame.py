@@ -12,6 +12,7 @@ import customtkinter as ctk
 
 from gui import theme
 from gui.resources import app_capture_dir
+from utils.system import open_with_system
 
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".doc", ".html", ".htm", ".md",
@@ -680,16 +681,4 @@ class InputFrame(ctk.CTkFrame):
         if self.on_open_requested:
             self.on_open_requested(path, self.is_clipboard_path(path))
             return
-        self._open_with_default_app(path)
-
-    @staticmethod
-    def _open_with_default_app(path: Path):
-        if not path.exists():
-            return
-        if sys.platform == "win32":
-            import os
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
+        open_with_system(path)

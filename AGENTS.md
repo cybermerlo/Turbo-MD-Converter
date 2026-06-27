@@ -37,7 +37,8 @@ ed estrazione strutturata opzionale (LangExtract). Nessun runtime Node/JS.
   `media_duration.py` (durata video pure-python), `ffmpeg_tools.py` (rimozione
   traccia audio), `retry.py` (backoff), `updater.py` (auto-update),
   `secret_store.py` (segreti nel keyring/DPAPI), `text_utils.py`,
-  `logging_config.py`
+  `logging_config.py`, `system.py` (helper OS condivisi: `no_window_kwargs`,
+  `open_with_system`)
 - ffmpeg arriva da `imageio-ffmpeg` (bundle pip); nel build è in `ffmpeg/ffmpeg.exe`
 - `tests/` — unittest
 
@@ -48,6 +49,9 @@ audio + descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi i
 `DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.docx`/`.doc`, `.xml`,
 `.rtf`, `.html`, `.p7m`). Le email **uniscono corpo + allegati in un unico
 testo** → un solo MD (vedi `join_email_and_attachments`).
+`AttachmentProcessor.to_text()` è **ricorsivo**: allegati annidati (una `.eml`
+inoltrata dentro un'altra `.eml`, archivi dentro archivi) vengono espansi a
+testo invece di essere saltati.
 
 ## Rinomina file (LLM)
 Opzionale (`config.rename_files`). `RenameCoordinator` (`pipeline/rename_coordinator.py`)

@@ -99,5 +99,21 @@ class BatchRenameContextTests(unittest.TestCase):
         self.assertIn("capitolo principale", block)
 
 
+class PlausibleDateTests(unittest.TestCase):
+    def test_accepts_real_dates(self):
+        for valid in ("20250101", "20230228", "20240229"):  # 2024 bisestile
+            self.assertTrue(file_renamer._is_plausible_date(valid), valid)
+
+    def test_rejects_impossible_calendar_dates(self):
+        # 30 feb, 31 apr, mese 13, giorno 00: calendariamente impossibili
+        for bad in ("20230230", "20230431", "20231301", "20230100"):
+            self.assertFalse(file_renamer._is_plausible_date(bad), bad)
+
+    def test_rejects_non_leap_feb_29_and_out_of_range_years(self):
+        self.assertFalse(file_renamer._is_plausible_date("20230229"))  # 2023 non bisestile
+        self.assertFalse(file_renamer._is_plausible_date("18991231"))  # anno < 1900
+        self.assertFalse(file_renamer._is_plausible_date("2101"))      # stringa corta
+
+
 if __name__ == "__main__":
     unittest.main()

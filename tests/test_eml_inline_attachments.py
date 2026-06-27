@@ -87,5 +87,44 @@ class EmlInlineAttachmentTests(unittest.TestCase):
             self.assertIn(b"\x89PNG\r\n\x1a\n-secondo", seen_bytes)
 
 
+class NestedEmailExpansionTests(unittest.TestCase):
+    """Una .eml allegata a un'altra .eml deve essere espansa a testo, non saltata."""
+
+    def test_inner_eml_attachment_is_expanded(self):
+        from config.settings import AppConfig
+        from pipeline.attachment_processor import AttachmentProcessor
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            inner = EmailMessage()
+            inner["Subject"] = "Comunicazione inoltrata"
+            inner.set_content("TESTO_INTERNO_DA_RECUPERARE")
+
+            outer = EmailMessage()
+            outer["Subject"] = "Inoltro"
+            outer.set_content("Corpo esterno.")
+            # I client di posta allegano una mail inoltrata come file binario
+            # con estensione .eml (non come parte message/rfc822 in-linea).
+            outer.add_attachment(
+                inner.as_bytes(),
+                maintype="application",
+                subtype="octet-stream",
+                filename="inoltrata.eml",
+            )
+            outer_path = Path(tmpdir) / "outer.eml"
+            outer_path.write_bytes(outer.as_bytes())
+
+            ap = AttachmentProcessor(
+                config=AppConfig(), ocr_pipeline=None,
+                emit_log=lambda *a, **k: None,
+                on_page_complete=None, on_page_skipped=None,
+                on_page_native_text=None, audio_transcriber=None,
+            )
+            ocr_result, _pending = ap.read_text_file(outer_path)
+
+            self.assertIn("Corpo esterno.", ocr_result.combined_text)
+            # Senza l'espansione delle .eml annidate questo testo andrebbe perso.
+            self.assertIn("TESTO_INTERNO_DA_RECUPERARE", ocr_result.combined_text)
+
+
 if __name__ == "__main__":
     unittest.main()

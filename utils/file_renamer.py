@@ -1,5 +1,6 @@
 """Derive a descriptive filename from OCR text via a lightweight LLM call."""
 
+import datetime
 import json
 import logging
 import re
@@ -396,12 +397,14 @@ def _ensure_unique_description(
 # ---------------------------------------------------------------------------
 
 def _is_plausible_date(date_str: str) -> bool:
-    """Return True if YYYYMMDD looks like a real calendar date."""
+    """Return True if YYYYMMDD is a real calendar date in a sensible range."""
     try:
         year = int(date_str[:4])
-        month = int(date_str[4:6])
-        day = int(date_str[6:])
-        return 1900 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31
+        if not 1900 <= year <= 2100:
+            return False
+        # datetime valida il giorno reale del mese (scarta 31/02, 31/04, ecc.)
+        datetime.date(year, int(date_str[4:6]), int(date_str[6:]))
+        return True
     except ValueError:
         return False
 

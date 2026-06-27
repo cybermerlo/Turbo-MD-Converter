@@ -748,8 +748,3 @@ def get_schema_preset(name: str) -> SchemaPreset | None:
         available = ", ".join(_SCHEMA_REGISTRY.keys())
         raise KeyError(f"Schema '{name}' non trovato. Disponibili: {available}")
     return builder()
-
-
-def get_available_schemas() -> list[str]:
-    """Return list of available schema preset names."""
-    return list(_SCHEMA_REGISTRY.keys())

@@ -277,6 +277,31 @@ def first_page_key(db_path: Path, candidates) -> bytes | None:
     return None
 
 
+def find_aux_key(db_path: Path, native_bytes: bytes, known: bytes | None = None):
+    """Trova la chiave (tipo 2) che decifra db_path: prima i candidati
+    strutturali, poi brute-force su tutte le finestre di byte di nativeSettings
+    (oracolo di validità sulla page-1)."""
+    page1 = db_path.read_bytes()[:PAGE_SIZE]
+
+    def ok(k: bytes) -> bool:
+        try:
+            return decrypt_db(page1, k)[:16] == SQLITE_MAGIC
+        except Exception:
+            return False
+
+    if known and ok(known):
+        return known
+    for k in carve_blob_candidates(native_bytes, [32, 16, 24]):
+        if ok(k):
+            return k
+    for L in (32, 16, 24):
+        for off in range(len(native_bytes) - L + 1):
+            k = native_bytes[off:off + L]
+            if ok(k):
+                return k
+    return None
+
+
 def dump_schema(con, label: str, sample: int = 3) -> None:
     print(f"\n    === {label} ===")
     for name, sql in con.execute(
@@ -569,15 +594,17 @@ def run(localstate: Path, out_dir: Path, manual_oduid: str | None, limit: int) -
     except Exception as e:
         print(f"    (esplorazione genericStorage fallita: {e})")
 
-    # DB ausiliari (chiave tipo 2: trovata per oracolo di validità tra le candidate).
-    for aux in ("contacts.db", "contactsState.db", "mediaDownloads.db"):
+    # DB ausiliari (chiave tipo 2): brute-force mirato su nativeSettings.
+    type2 = None
+    for aux in ("contacts.db", "contactsState.db", "mediaDownloads.db", "abprops.db"):
         ap = sess_folder / aux
         if not ap.exists():
             continue
-        k = first_page_key(ap, candidates)
+        k = find_aux_key(ap, native_bytes, known=type2)
         if not k:
-            print(f"\n    [{aux}] nessuna chiave candidata valida (salto)")
+            print(f"\n    [{aux}] chiave non trovata (salto)")
             continue
+        type2 = k
         try:
             cp = decrypt_pair(ap, k, out_dir, aux.replace(".db", ""))
             con = open_ro(cp)

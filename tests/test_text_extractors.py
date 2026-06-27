@@ -49,6 +49,25 @@ class ExtractDocLegacyTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 extract_doc_text(p)
 
+    def test_empty_file_raises_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "vuoto.doc"
+            p.write_bytes(b"")
+            with self.assertRaises(RuntimeError):
+                extract_doc_text(p)
+
+    @unittest.skipUnless(_FIXTURE_DOC.exists(), "fixture assente")
+    def test_truncated_ole_raises_runtime_not_raw(self):
+        # Un .doc OLE valido ma troncato non deve far emergere struct.error/OLE
+        # grezza: il contratto è un RuntimeError con messaggio guida.
+        raw = _FIXTURE_DOC.read_bytes()
+        for cut in (256, 512, 1024):
+            with tempfile.TemporaryDirectory() as tmp:
+                p = Path(tmp) / "tronco.doc"
+                p.write_bytes(raw[:cut])
+                with self.assertRaises(RuntimeError):
+                    extract_doc_text(p)
+
     @unittest.skipUnless(
         _FIXTURE_DOC.exists(),
         "fixture sample_legacy.doc assente",

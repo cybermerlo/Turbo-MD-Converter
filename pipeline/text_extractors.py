@@ -114,7 +114,15 @@ def extract_doc_text(file_path: Path) -> str:
             "Il file .doc non e' un documento Word 97-2003 valido (OLE2)."
         )
 
-    ole = olefile.OleFileIO(str(file_path))
+    # Contratto: qualunque .doc non interpretabile (OLE corrotto, FIB/CLX
+    # troncata, stream mancanti) deve diventare un RuntimeError con messaggio
+    # guida, mai un'eccezione grezza (struct.error/OLE/IndexError). I RuntimeError
+    # con messaggi specifici sollevati qui dentro vengono ri-propagati invariati.
+    try:
+        ole = olefile.OleFileIO(str(file_path))
+    except Exception as e:
+        raise RuntimeError(f"file .doc non apribile (OLE non valido): {e}") from e
+
     try:
         if ole.exists("EncryptedPackage") or ole.exists("Encryption"):
             raise RuntimeError("documento .doc cifrato")
@@ -124,6 +132,8 @@ def extract_doc_text(file_path: Path) -> str:
         wd = ole.openstream("WordDocument").read()
         if wd[:2] != b"\xec\xa5":  # magic 0xA5EC della FIB
             raise RuntimeError("intestazione FIB non valida")
+        if len(wd) < 0x0200:  # la FIB deve coprire gli offset fissi sotto
+            raise RuntimeError("FIB del .doc troncata o non valida")
 
         flags = struct.unpack_from("<H", wd, 0x000A)[0]
         if flags & 0x0100:  # fEncrypted
@@ -154,7 +164,10 @@ def extract_doc_text(file_path: Path) -> str:
 
             if pcdt:
                 n = (len(pcdt) - 4) // 12
-                cps = [struct.unpack_from("<I", pcdt, k * 4)[0] for k in range(n + 1)]
+                cps = [
+                    struct.unpack_from("<I", pcdt, k * 4)[0]
+                    for k in range(n + 1)
+                ]
                 base = (n + 1) * 4
                 chunks = []
                 for k in range(n):
@@ -175,6 +188,10 @@ def extract_doc_text(file_path: Path) -> str:
         if not text and 0 <= fc_min < fc_mac <= len(wd):
             # Documento non "complex" (nessuna piece table): testo contiguo cp1252.
             text = wd[fc_min:fc_mac].decode("cp1252", "replace")
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"struttura .doc non interpretabile: {e}") from e
     finally:
         ole.close()
 

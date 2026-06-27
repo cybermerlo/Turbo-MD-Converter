@@ -264,6 +264,47 @@ def carve_blob_candidates(data: bytes, lengths) -> list[bytes]:
     return out
 
 
+def first_page_key(db_path: Path, candidates) -> bytes | None:
+    """Ritorna la prima chiave candidata che decifra la page-1 di db_path in
+    un header SQLite valido (oracolo di validità)."""
+    data = db_path.read_bytes()
+    for k in candidates:
+        try:
+            if decrypt_db(data[:PAGE_SIZE], k)[:16] == SQLITE_MAGIC:
+                return k
+        except Exception:
+            continue
+    return None
+
+
+def dump_schema(con, label: str, sample: int = 3) -> None:
+    print(f"\n    === {label} ===")
+    for name, sql in con.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type='table'"
+    ).fetchall():
+        oneline = " ".join((sql or "").split())
+        print(f"      {oneline}")
+    for t in list_tables(con):
+        try:
+            n = con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+        except Exception:
+            n = "?"
+        print(f"      - {t}: {n} righe")
+        if sample:
+            try:
+                cur = con.execute(f'SELECT * FROM "{t}" LIMIT {sample}')
+                cols = [d[0] for d in cur.description]
+                for row in cur.fetchall():
+                    vals = [
+                        (v[:50] + "…") if isinstance(v, str) and len(v) > 50 else
+                        (f"<{len(v)}B>" if isinstance(v, (bytes, bytearray)) else v)
+                        for v in row
+                    ]
+                    print(f"          {dict(zip(cols, vals))}")
+            except Exception as e:
+                print(f"          (sample '{t}' fallito: {e})")
+
+
 def find_keytypes(con) -> dict:
     """nativeSettings: cerca righe (intero piccolo -> blob)."""
     out: dict[int, bytes] = {}
@@ -503,6 +544,47 @@ def run(localstate: Path, out_dir: Path, manual_oduid: str | None, limit: int) -
         print(f"[6][X] decifratura/lettura genericStorage fallita: {e}")
         traceback.print_exc()
         return 8
+
+    # 7) Esplorazione del modello dati (per progettare lettore + selettore).
+    print("\n[7] --- esplorazione modello dati ---")
+    try:
+        con = open_ro(clear_generic)
+        row = con.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='message'"
+        ).fetchone()
+        if row:
+            print(f"    message schema: {' '.join((row[0] or '').split())}")
+        print("    Top 15 chat per numero messaggi:")
+        for chatid, cnt, last in con.execute(
+            "SELECT chatId, COUNT(*), MAX(timestamp) FROM message "
+            "GROUP BY chatId ORDER BY COUNT(*) DESC LIMIT 15"
+        ).fetchall():
+            print(f"      {chatid}  msg={cnt}  ultimo_ts={last}")
+        empty = con.execute(
+            "SELECT COUNT(*) FROM message WHERE text IS NULL OR text=''"
+        ).fetchone()[0]
+        total = con.execute("SELECT COUNT(*) FROM message").fetchone()[0]
+        print(f"    messaggi totali={total}, con testo vuoto (possibili media)={empty}")
+        con.close()
+    except Exception as e:
+        print(f"    (esplorazione genericStorage fallita: {e})")
+
+    # DB ausiliari (chiave tipo 2: trovata per oracolo di validità tra le candidate).
+    for aux in ("contacts.db", "contactsState.db", "mediaDownloads.db"):
+        ap = sess_folder / aux
+        if not ap.exists():
+            continue
+        k = first_page_key(ap, candidates)
+        if not k:
+            print(f"\n    [{aux}] nessuna chiave candidata valida (salto)")
+            continue
+        try:
+            cp = decrypt_pair(ap, k, out_dir, aux.replace(".db", ""))
+            con = open_ro(cp)
+            dump_schema(con, f"{aux} (chiave {len(k)}B)", sample=3)
+            con.close()
+        except Exception as e:
+            print(f"\n    [{aux}] lettura fallita: {e}")
 
     print("\n" + "=" * 66)
     print(" RISULTATO: catena di decifratura COMPLETA. I messaggi sono leggibili.")

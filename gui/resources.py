@@ -29,7 +29,7 @@ def resource_path(name: str) -> Path:
 
 
 def app_capture_dir() -> Path:
-    """Cartella visibile per input/output 'sintetici' (appunti, WhatsApp).
+    """Cartella visibile per input/output 'sintetici' (es. appunti incollati).
 
     Questi input non hanno una cartella sorgente naturale: con output mode
     "accanto" finirebbero in %TEMP%. Li raccogliamo in una sottocartella di

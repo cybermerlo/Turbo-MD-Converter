@@ -98,15 +98,17 @@ class ConfigKeyringIntegrationTests(SecretStoreTestBase):
             self.assertEqual(on_disk["gemini_api_key"], "")
             self.assertEqual(secret_store.get_secret("gemini_api_key"), "legacy-key")
 
-    def test_whatsapp_key_also_stored_in_keyring(self):
+    def test_elevenlabs_key_also_stored_in_keyring(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.json"
             save_config(
-                AppConfig(whatsapp_backup_key="0" * 64), config_path=path
+                AppConfig(elevenlabs_api_key="el-secret"), config_path=path
             )
             on_disk = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(on_disk["whatsapp_backup_key"], "")
-            self.assertEqual(secret_store.get_secret("whatsapp_backup_key"), "0" * 64)
+            self.assertEqual(on_disk["elevenlabs_api_key"], "")
+            self.assertEqual(
+                secret_store.get_secret("elevenlabs_api_key"), "el-secret"
+            )
 
 
 if __name__ == "__main__":

@@ -48,11 +48,11 @@ BADGE_COLORS = {
     "MD":  (PAPER_2, INK_2),
     "HTML":(PAPER_2, INK_2),
     "RTF": (PAPER_2, INK_2),
+    "XML": (PAPER_2, INK_2),
     "P7M": ("#efe5d2", "#6b5418"),
     "ZIP": ("#efe5d2", "#6b5418"),
     "7Z":  ("#efe5d2", "#6b5418"),
     "TAR": ("#efe5d2", "#6b5418"),
-    "WA":  ("#dcefe0", "#1f7a44"),
 }
 
 EXT_TO_BADGE = {
@@ -62,14 +62,14 @@ EXT_TO_BADGE = {
     ".mp3": "AUD", ".wav": "AUD", ".flac": "AUD", ".m4a": "AUD", ".ogg": "AUD",
     ".opus": "AUD",
     ".mp4": "MP4",
-    ".docx": "DOCX",
+    ".docx": "DOCX", ".doc": "DOC",
     ".eml": "EML", ".msg": "MSG",
     ".txt": "TXT", ".md": "MD",
     ".html": "HTML", ".htm": "HTML",
+    ".xml": "XML",
     ".rtf": "RTF",
     ".p7m": "P7M",
     ".zip": "ZIP", ".7z": "7Z", ".tar": "TAR", ".tgz": "TAR",
-    ".wachat": "WA",
 }
 
 

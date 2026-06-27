@@ -1,4 +1,4 @@
-"""Archiviazione sicura dei segreti (chiavi API, chiave backup WhatsApp).
+"""Archiviazione sicura dei segreti (chiavi API).
 
 Su Windows i segreti vanno nel **Credential Manager** (DPAPI, per-utente) tramite
 la libreria `keyring`, invece che in chiaro dentro `config.json`. Se il keyring
@@ -30,7 +30,6 @@ SECRET_FIELDS = (
     "gemini_api_key",
     "langextract_api_key",
     "elevenlabs_api_key",
-    "whatsapp_backup_key",
 )
 
 _keyring_module = None

@@ -21,9 +21,11 @@ from pipeline.email_sources import (
 )
 from pipeline.models import EmailAttachmentDocument
 from pipeline.text_extractors import (
+    extract_doc_text,
     extract_docx_text,
     extract_html_text,
     extract_rtf_text,
+    extract_xml_text,
 )
 
 
@@ -84,7 +86,7 @@ class AttachmentProcessor:
                     return self.audio_transcriber.transcribe(att_path)["text"]
                 except AudioNotDecodableError as e:
                     # Video/audio senza traccia decodificabile: condizione attesa
-                    # (es. video WhatsApp muto), non un errore di elaborazione.
+                    # (es. video muto), non un errore di elaborazione.
                     self.emit_log(
                         f"Allegato '{att_path.name}' senza audio trascrivibile "
                         f"(saltato): {e}",
@@ -93,8 +95,12 @@ class AttachmentProcessor:
                     return ""
             if suffix == ".docx":
                 return extract_docx_text(att_path)
+            if suffix == ".doc":
+                return extract_doc_text(att_path)
             if suffix in (".html", ".htm"):
                 return extract_html_text(att_path)
+            if suffix == ".xml":
+                return extract_xml_text(att_path)
             if suffix == ".rtf":
                 return extract_rtf_text(att_path)
             if suffix in (".txt", ".md"):
@@ -156,9 +162,15 @@ class AttachmentProcessor:
         elif suffix == ".docx":
             text = extract_docx_text(file_path)
             self.emit_log("File DOCX letto direttamente", "INFO")
+        elif suffix == ".doc":
+            text = extract_doc_text(file_path)
+            self.emit_log("File DOC legacy letto direttamente", "INFO")
         elif suffix in (".html", ".htm"):
             text = extract_html_text(file_path)
             self.emit_log("File HTML letto direttamente", "INFO")
+        elif suffix == ".xml":
+            text = extract_xml_text(file_path)
+            self.emit_log("File XML letto direttamente", "INFO")
         elif suffix == ".rtf":
             text = extract_rtf_text(file_path)
             self.emit_log("File RTF letto direttamente", "INFO")
@@ -168,12 +180,6 @@ class AttachmentProcessor:
         elif suffix == ".p7m":
             self.emit_log(f"Estrazione firma P7M: {file_path.name}", "INFO")
             text = self._extract_p7m_text(file_path, cancel_event)
-        elif suffix == ".wachat":
-            from pipeline.whatsapp_sources import extract_whatsapp_parts
-            text = extract_whatsapp_parts(
-                file_path, process, self.emit_log, cancel_event,
-            )
-            self.emit_log("Conversazione WhatsApp letta", "INFO")
         elif suffix in ARCHIVE_EXTENSIONS or name_lower.endswith(
             (".tar.gz", ".tar.bz2", ".tar.xz")
         ):

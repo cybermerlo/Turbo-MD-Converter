@@ -1,8 +1,9 @@
 # Turbo MD Converter
 
 App desktop **Windows** (Python + CustomTkinter) che converte documenti eterogenei
-in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`), archivi
-(`.zip`/`.7z`/`.tar.*`), firmati `.p7m` e **conversazioni WhatsApp**.
+in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`), documenti
+Office (`.docx`/`.doc`/`.rtf`), `.xml`, archivi (`.zip`/`.7z`/`.tar.*`) e firmati
+`.p7m`.
 
 Usa **Google Gemini** per l'OCR e la descrizione visiva dei video, **ElevenLabs
 Scribe v2** per la trascrizione audio (con riconoscimento degli interlocutori) ed
@@ -16,8 +17,8 @@ un file `.md`**.
 - **Audio/video** → trascrizione; i video producono un solo MD con
   `## Trascrizione audio` + `## Descrizione visiva`.
 - **Email e archivi**: corpo + allegati uniti (o separati) in Markdown.
-- **Import WhatsApp** (Android, tutto in locale via `adb` + backup cifrato E2E):
-  nessun cloud, nessun login. Vedi [AGENTS.md](AGENTS.md).
+- **Documenti Office e XML**: `.docx`, `.doc` (Word 97-2003 legacy), `.rtf` e
+  `.xml` letti direttamente, senza OCR.
 - **Rinomina automatica** dei file via LLM e **check finale errori** (QA) opzionali.
 - **Auto-aggiornamento** dall'ultima release GitHub.
 
@@ -35,8 +36,8 @@ python main.py
 
 ## Configurazione
 
-Le chiavi API si inseriscono in **Impostazioni**. I **segreti** (chiavi API e
-chiave di backup WhatsApp) vengono salvati nel **Credential Manager di Windows**
+Le chiavi API si inseriscono in **Impostazioni**. I **segreti** (chiavi API)
+vengono salvati nel **Credential Manager di Windows**
 (DPAPI) quando disponibile; le altre impostazioni in
 `%APPDATA%\OCRLangExtract\config.json`. Se il keyring non è disponibile (o è
 disabilitato con `TURBOMD_DISABLE_KEYRING=1`), i segreti ricadono nel
@@ -57,5 +58,5 @@ python -m unittest discover -s tests
 
 ## Altra documentazione
 
-- [AGENTS.md](AGENTS.md) — architettura, modello dati della pipeline, import WhatsApp.
+- [AGENTS.md](AGENTS.md) — architettura e modello dati della pipeline.
 - [BUILD_README.md](BUILD_README.md) — build dell'installer Windows (cx_Freeze + Inno Setup).

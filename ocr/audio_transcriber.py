@@ -18,7 +18,7 @@ AUDIO_MIME_TYPES: dict[str, str] = {
     ".m4a":  "audio/mp4",
     ".ogg":  "audio/ogg",
     ".mp4":  "audio/mp4",
-    # Le note vocali WhatsApp sono Opus in container Ogg.
+    # Le note vocali (.opus) sono Opus in container Ogg.
     ".opus": "audio/ogg",
 }
 
@@ -29,7 +29,7 @@ class AudioTranscriberError(Exception):
 
 
 class AudioNotDecodableError(AudioTranscriberError):
-    """Il file non contiene audio decodificabile (es. video WhatsApp muto).
+    """Il file non contiene audio decodificabile (es. video muto).
 
     Condizione attesa e benigna: va trattata come skip, non come errore.
     """

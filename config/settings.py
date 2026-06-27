@@ -64,9 +64,6 @@ class AppConfig:
     video_max_output_tokens: int = 2048
     # Qualità automatica: video ≤ questa durata (minuti) → HIGH, oltre → LOW.
     video_high_quality_max_min: int = 3
-    # Importazione WhatsApp (Android via adb + backup locale cifrato).
-    whatsapp_backup_key: str = ""   # 64 cifre esadecimali del backup E2E
-    adb_path: str = ""              # override percorso adb.exe (vuoto = bundle/PATH)
     # Geometria finestra ("LxA+X+Y") ripristinata all'avvio, salvata alla chiusura.
     window_geometry: str = ""
 
@@ -165,7 +162,7 @@ def load_config(config_path: Path | None = None,
 def save_config(config: AppConfig, config_path: Path | None = None) -> None:
     """Salva la config su JSON; i segreti vanno nel keyring quando disponibile.
 
-    I campi in ``secret_store.SECRET_FIELDS`` (chiavi API, chiave backup WhatsApp)
+    I campi in ``secret_store.SECRET_FIELDS`` (chiavi API)
     vengono memorizzati nel Credential Manager di sistema; nel JSON si scrive una
     stringa vuota al loro posto. Se il keyring non è disponibile, il valore resta
     nel JSON come prima (fallback in chiaro).

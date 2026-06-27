@@ -170,7 +170,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
             on_files_changed=self._on_files_changed,
             on_selection_changed=self._on_input_selection_changed,
             on_open_requested=self._open_input_file,
-            on_import_whatsapp=self._open_whatsapp_import,
         )
         self.input_frame.pack(side="left", fill="both", expand=True)
 
@@ -580,18 +579,6 @@ class TurboMDConverterApp(ctk.CTk, TkinterDnD.DnDWrapper):
     def _open_update_dialog(self) -> None:
         from gui.frames.update_dialog import UpdateDialog
         UpdateDialog(self)
-
-    def _open_whatsapp_import(self) -> None:
-        from gui.frames.whatsapp_import_window import WhatsAppImportWindow
-        WhatsAppImportWindow(
-            self, self.config, on_package_ready=self._on_whatsapp_package_ready,
-        )
-
-    def _on_whatsapp_package_ready(self, package_path: Path) -> None:
-        self.input_frame.add_paths([package_path])
-        self.log_frame.append(
-            f"Conversazione WhatsApp importata: {package_path.name}"
-        )
 
     def _on_settings_saved(self, config: AppConfig) -> None:
         self.config = config

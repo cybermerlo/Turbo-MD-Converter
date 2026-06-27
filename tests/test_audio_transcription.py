@@ -7,11 +7,13 @@ import unittest
 from pathlib import Path
 
 from ocr.audio_transcriber import (
+    AUDIO_MIME_TYPES,
     build_transcript,
     distinct_speakers,
     segments_from_words,
 )
 from ocr.speaker_id import pick_speaker_snippets, rewrite_transcript_in_md
+from pipeline.constants import AUDIO_EXTENSIONS
 from utils.cost_tracker import CostTracker
 
 
@@ -228,6 +230,68 @@ class DiarizationPipelineTests(unittest.TestCase):
             proc.process_single(audio, threading.Event())
         self.assertEqual(
             [], [e for e in events if isinstance(e, SpeakerDiarizationEvent)])
+
+
+class AudioConstantsTests(unittest.TestCase):
+    def test_opus_registered(self):
+        self.assertIn(".opus", AUDIO_EXTENSIONS)
+        self.assertEqual("audio/ogg", AUDIO_MIME_TYPES[".opus"])
+
+
+class AudioRetryPolicyTests(unittest.TestCase):
+    """Gli errori client 4xx (es. video senza audio) non vanno ritentati."""
+
+    def test_status_code_400_not_retried(self):
+        from ocr.audio_transcriber import _is_non_retryable
+
+        class Err(Exception):
+            status_code = 400
+
+        self.assertTrue(_is_non_retryable(Err("could not be decoded")))
+
+    def test_message_based_400(self):
+        from ocr.audio_transcriber import _is_non_retryable
+        self.assertTrue(_is_non_retryable(
+            Exception("API error occurred: Status 400. Body: could not be decoded")))
+
+    def test_429_is_retryable(self):
+        from ocr.audio_transcriber import _is_non_retryable
+
+        class Err(Exception):
+            status_code = 429
+
+        self.assertFalse(_is_non_retryable(Err("rate limit")))
+
+    def test_500_is_retryable(self):
+        from ocr.audio_transcriber import _is_non_retryable
+
+        class Err(Exception):
+            status_code = 500
+
+        self.assertFalse(_is_non_retryable(Err("server error")))
+
+
+class UndecodableAudioTests(unittest.TestCase):
+    """Un video senza traccia audio è una condizione attesa, non un errore."""
+
+    def test_detects_could_not_be_decoded(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+        self.assertTrue(_is_undecodable_audio(
+            Exception('Status 400. Body: {"message":"Audio input could not '
+                      'be decoded. ","type":"invalid_request_file","code":"3310"}')))
+
+    def test_detects_code_attribute(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+
+        class Err(Exception):
+            code = "3310"
+
+        self.assertTrue(_is_undecodable_audio(Err("boom")))
+
+    def test_other_errors_not_flagged(self):
+        from ocr.audio_transcriber import _is_undecodable_audio
+        self.assertFalse(_is_undecodable_audio(Exception("rate limit")))
+        self.assertFalse(_is_undecodable_audio(None))
 
 
 if __name__ == "__main__":

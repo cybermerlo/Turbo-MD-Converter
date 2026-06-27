@@ -200,6 +200,75 @@ def probe_app_version(packages: list[Path]) -> dict:
     return out
 
 
+_DB_EXTS = (".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3")
+_DB_NAME_HINTS = (
+    "genericstoragedb", "message.db", "nativesettings.db", "msgstore",
+    "session.db", "messages", "chat", "storage",
+)
+_MEDIA_DIR_HINTS = ("transfers", "media", "downloads")
+
+
+def _is_db_candidate(name: str) -> bool:
+    low = name.lower()
+    return low.endswith(_DB_EXTS) or any(h in low for h in _DB_NAME_HINTS)
+
+
+def deep_scan(pkg: Path, max_files: int = 400_000) -> dict:
+    """Scansione ricorsiva read-only del pacchetto: individua i DB e i media
+    ovunque si trovino in questo build (il layout cambia tra le versioni)."""
+    db_candidates: list[dict] = []
+    largest: list[tuple[int, str]] = []
+    media_dirs: dict[str, int] = {}
+    top_summary: dict[str, dict] = {}
+    walked = 0
+    capped = False
+
+    for root, _dirs, files in os.walk(pkg):
+        rootp = Path(root)
+        rel = "(root)" if rootp == pkg else str(rootp.relative_to(pkg)).split(os.sep)[0]
+        ts = top_summary.setdefault(rel, {"files": 0, "bytes": 0})
+        low_dir = rootp.name.lower()
+        if any(h in low_dir for h in _MEDIA_DIR_HINTS):
+            media_dirs[str(rootp.relative_to(pkg))] = len(files)
+        for fn in files:
+            walked += 1
+            if walked > max_files:
+                capped = True
+                break
+            fp = rootp / fn
+            try:
+                size = fp.stat().st_size
+            except OSError:
+                size = -1
+            ts["files"] += 1
+            if size > 0:
+                ts["bytes"] += size
+                largest.append((size, str(fp.relative_to(pkg))))
+            if _is_db_candidate(fn):
+                try:
+                    db_candidates.append({**_file_info(fp),
+                                          "rel": str(fp.relative_to(pkg))})
+                except Exception as e:  # noqa: BLE001
+                    db_candidates.append({"rel": fn, "error": str(e)})
+        if capped:
+            break
+
+    largest.sort(reverse=True)
+    return {
+        "walked_files": walked,
+        "capped": capped,
+        "top_level_summary": {
+            k: {"files": v["files"], "mb": round(v["bytes"] / 1048576, 1)}
+            for k, v in sorted(top_summary.items(), key=lambda kv: -kv[1]["bytes"])
+        },
+        "db_candidates": db_candidates[:40],
+        "largest_files": [
+            {"rel": r, "mb": round(s / 1048576, 2)} for s, r in largest[:25]
+        ],
+        "media_dirs": media_dirs,
+    }
+
+
 def main() -> int:
     report: dict = {
         "generated_at": _now(),
@@ -225,6 +294,9 @@ def main() -> int:
     report["oduid"] = _safe(probe_oduid)
     report["dpapi_ng"] = _safe(probe_dpapi_ng)
     report["is_admin"] = _safe(_is_admin)
+    # Scansione ricorsiva: in alcuni build il DB messaggi e i media non sono
+    # direttamente in LocalState. Cerchiamoli ovunque nel pacchetto.
+    report["deep_scan"] = [_safe(lambda p=p: deep_scan(p)) for p in packages]
 
     # ── Stampa leggibile ────────────────────────────────────────────────────
     print("=" * 64)
@@ -251,6 +323,25 @@ def main() -> int:
                   f"{mt['total_mb']} MB  {mt.get('by_extension')}")
         else:
             print(f"  Media (shared/transfers): assente ({mt.get('path')})")
+    for ds in report.get("deep_scan", []):
+        if not isinstance(ds, dict) or "error" in ds:
+            print(f"\n--- Scansione ricorsiva: {ds} ---")
+            continue
+        print("\n--- Scansione ricorsiva del pacchetto ---")
+        print(f"  File esaminati: {ds.get('walked_files')}"
+              f"{' (TRONCATO)' if ds.get('capped') else ''}")
+        print(f"  Sottocartelle (file, MB): {ds.get('top_level_summary')}")
+        print("  Candidati DB trovati:")
+        for c in ds.get("db_candidates", []):
+            plain = c.get("looks_plain_sqlite")
+            tag = "SQLite IN CHIARO" if plain else "cifrato" if plain is False else "?"
+            print(f"    • {c.get('rel'):<50} {c.get('size_bytes','?'):>12} byte  [{tag}]")
+        if ds.get("media_dirs"):
+            print(f"  Cartelle media (path: n.file): {ds.get('media_dirs')}")
+        print("  File più grandi:")
+        for lf in ds.get("largest_files", [])[:12]:
+            print(f"    • {lf.get('rel'):<50} {lf.get('mb')} MB")
+
     print("\n--- Chiave dispositivo (ODUID) ---")
     print(f"  {report['oduid']}")
     print("--- DPAPI-NG (ncrypt) ---")

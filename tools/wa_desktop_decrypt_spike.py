@@ -228,6 +228,42 @@ def find_blobs(con, lo: int = 16, hi: int = 64) -> list[tuple]:
     return found
 
 
+def find_key_by_sha1(data: bytes, targets: set[str], lengths) -> tuple[int, int] | None:
+    """Trova l'offset/lunghezza della finestra di byte il cui SHA1 (hex upper) è
+    in `targets`. Usato come oracolo deterministico per il clientKey (SHA1 ==
+    nome cartella sessione), indipendente dall'applicazione del WAL da SQLite."""
+    n = len(data)
+    for L in lengths:
+        if L > n:
+            continue
+        for off in range(0, n - L + 1):
+            if hashlib.sha1(data[off:off + L]).hexdigest().upper() in targets:
+                return (off, L)
+    return None
+
+
+def carve_blob_candidates(data: bytes, lengths) -> list[bytes]:
+    """Carve di BLOB SQLite per lunghezza: un BLOB di L byte è preceduto dal
+    serial type varint = 12 + 2*L (un solo byte per L<=57). Robusto al fatto che
+    i dati siano nel WAL non applicato da SQLite."""
+    out: list[bytes] = []
+    seen: set[bytes] = set()
+    for L in lengths:
+        marker = 12 + 2 * L
+        if marker > 127:
+            continue
+        mb = bytes([marker])
+        i = data.find(mb)
+        while i != -1:
+            if i + 1 + L <= len(data):
+                cand = data[i + 1:i + 1 + L]
+                if cand not in seen:
+                    seen.add(cand)
+                    out.append(cand)
+            i = data.find(mb, i + 1)
+    return out
+
+
 def find_keytypes(con) -> dict:
     """nativeSettings: cerca righe (intero piccolo -> blob)."""
     out: dict[int, bytes] = {}
@@ -302,34 +338,47 @@ def run(localstate: Path, out_dir: Path, manual_oduid: str | None, limit: int) -
         print(f"[2][X] decifratura session.db fallita: {e}")
         return 4
 
-    # 3) clientKey: il BLOB il cui SHA1 == nome cartella sessione
-    try:
-        con = open_ro(clear_session)
-        blobs = find_blobs(con, 16, 64)
-        con.close()
-        print(f"[3] BLOB candidati in session.db: {len(blobs)} "
-              f"(lunghezze: {sorted({len(b) for _,_,b in blobs})})")
-        client_key = None
-        matched_folder = None
-        for _t, _c, b in blobs:
-            sha1 = hashlib.sha1(b).hexdigest().upper()
-            if sha1 in (f.upper() for f in session_folders):
-                client_key = b
-                matched_folder = sha1
-                break
-        if client_key:
-            print(f"[3] clientKey TROVATO ({len(client_key)}B): "
-                  f"SHA1 == cartella sessione {matched_folder} ✓✓  "
-                  f"(CHECKPOINT CHIAVE: la catena DPAPI/decifratura è CORRETTA)")
-        else:
-            print("[3][!] nessun BLOB con SHA1 == cartella sessione. "
-                  "Stampo i candidati per analisi:")
-            for t, c, b in blobs[:20]:
-                print(f"      {t}.{c}: {len(b)}B sha1={hashlib.sha1(b).hexdigest().upper()}")
-            return 5
-    except Exception as e:
-        print(f"[3][X] estrazione clientKey fallita: {e}")
-        traceback.print_exc()
+    # 3) clientKey via ORACOLO SHA1 sui byte decifrati (db + wal): la finestra il
+    #    cui SHA1 == nome cartella sessione È il clientKey. Indipendente dal fatto
+    #    che SQLite applichi o meno il WAL.
+    targets = {f.upper() for f in session_folders}
+    sources = [("session.clear.db", clear_session.read_bytes())]
+    wal_clear = clear_session.with_name("session.clear.db-wal")
+    if wal_clear.exists():
+        sources.append(("session.clear.db-wal", wal_clear.read_bytes()))
+    # Diagnostica decifratura WAL: presenza del magic SQLite e ratio stampabile.
+    for name, blob in sources:
+        magic_at = blob.find(SQLITE_MAGIC)
+        sample = blob[64:64 + 2000]
+        printable = sum(1 for c in sample if 9 <= c <= 13 or 32 <= c <= 126)
+        ratio = round(printable / max(1, len(sample)), 2)
+        print(f"[3] {name}: {len(blob)}B  magic@{magic_at}  printable~{ratio}")
+    lengths = [48, 32, 64] + [n for n in range(16, 65) if n not in (48, 32, 64)]
+    client_key = matched_folder = where = None
+    for name, blob in sources:
+        hit = find_key_by_sha1(blob, targets, lengths)
+        if hit:
+            off, L = hit
+            client_key = blob[off:off + L]
+            matched_folder = hashlib.sha1(client_key).hexdigest().upper()
+            where = f"{name}@{off} len={L}"
+            break
+    if client_key:
+        print(f"[3] clientKey TROVATO via oracolo SHA1 ({len(client_key)}B) in {where}")
+        print(f"    SHA1 == cartella sessione {matched_folder} ✓✓  "
+              f"(CHECKPOINT CHIAVE: catena DPAPI/decifratura CORRETTA)")
+    else:
+        try:
+            con = open_ro(clear_session)
+            blobs = find_blobs(con, 1, 256)
+            con.close()
+            lens = sorted({len(b) for _, _, b in blobs})
+            print(f"[3][!] oracolo non ha trovato il clientKey. "
+                  f"BLOB via sqlite: {len(blobs)} (lunghezze {lens})")
+        except Exception as e:
+            print(f"[3][!] oracolo fallito; scan sqlite errore: {e}")
+        print("    -> se il WAL ha printable basso/magic@-1, la sua decifratura va "
+              "corretta. Diagnostica sopra.")
         return 5
 
     sess_folder = sessions_dir / matched_folder
@@ -370,29 +419,56 @@ def run(localstate: Path, out_dir: Path, manual_oduid: str | None, limit: int) -
               "Esegui ZAPiXDESK -GetID e ripassa con --oduid <hex>.")
         return 6
 
-    # 5) chiavi tipo 1/2/3
+    # 5) chiavi candidate da nativeSettings: carve strutturale sui byte decifrati
+    #    (db + wal), robusto al WAL non applicato. La chiave giusta sarà quella che
+    #    al passo 6 decifra genericStorage in un SQLite valido (oracolo di validità).
+    native_bytes = clear_native.read_bytes()
+    nwal = clear_native.with_name("nativeSettings.clear.db-wal")
+    if nwal.exists():
+        native_bytes += nwal.read_bytes()
+    candidates = carve_blob_candidates(native_bytes, [32, 16, 24])
     try:
         con = open_ro(clear_native)
-        keytypes = find_keytypes(con)
+        kt = find_keytypes(con)
         con.close()
-        print(f"[5] chiavi in nativeSettings: { {k: len(v) for k,v in keytypes.items()} }")
-        type1 = keytypes.get(1)
-        if not type1:
-            print("[5][X] chiave tipo 1 (messaggi) non trovata")
-            return 7
+        print(f"[5] keytypes via sqlite: { {k: len(v) for k, v in kt.items()} }")
+        if kt.get(1):
+            candidates.insert(0, kt[1])  # priorità alla type1 dichiarata
+        for v in kt.values():
+            if v not in candidates:
+                candidates.append(v)
     except Exception as e:
-        print(f"[5][X] estrazione chiavi fallita: {e}")
+        print(f"[5] (keytypes via sqlite non disponibili: {e})")
+    candidates = [k for k in candidates if len(k) in (16, 24, 32)]
+    print(f"[5] chiavi candidate per i messaggi: {len(candidates)} "
+          f"(lunghezze {sorted({len(k) for k in candidates})})")
+    if not candidates:
+        print("[5][X] nessuna chiave candidata in nativeSettings (carve da rivedere)")
         return 7
 
-    # 6) decifra genericStorage.db (i MESSAGGI) e ispeziona
+    # 6) prova ogni candidata sulla page-1 di genericStorage; la giusta dà SQLite.
     generic = sess_folder / "genericStorage.db"
     if not generic.exists():
         print(f"[6][X] genericStorage.db non trovato in {sess_folder}")
         return 8
+    gdata = generic.read_bytes()
+    chosen = None
+    for k in candidates:
+        try:
+            if decrypt_db(gdata[:PAGE_SIZE], k)[:16] == SQLITE_MAGIC:
+                chosen = k
+                break
+        except Exception:
+            continue
+    if not chosen:
+        print(f"[6][X] nessuna delle {len(candidates)} chiavi decifra genericStorage "
+              "(page-1 non SQLite). Carve nativeSettings da rivedere.")
+        return 8
+    print(f"[6] chiave messaggi trovata ({len(chosen)}B) -> decifro genericStorage…")
     try:
-        clear_generic = decrypt_pair(generic, type1, out_dir, "genericStorage")
+        clear_generic = decrypt_pair(generic, chosen, out_dir, "genericStorage")
         ok = is_plain_sqlite(clear_generic)
-        print(f"[6] genericStorage.db decifrato -> SQLite valido: {'SI ✓✓✓' if ok else 'NO ✗'}")
+        print(f"[6] genericStorage.db -> SQLite valido: {'SI ✓✓✓' if ok else 'NO ✗'}")
         if not ok:
             return 8
         con = open_ro(clear_generic)

@@ -46,6 +46,7 @@ build_exe_options = {
         "tkinterdnd2",
         "elevenlabs",
         "Cryptodome",       # usato da py7zr per gli archivi .7z
+        "cryptography",     # decifratura WhatsApp Desktop (AES) + transitive
         "google.protobuf",  # transitiva di google-genai / langextract
         "sqlite3",
         # moduli dell'app
@@ -56,6 +57,7 @@ build_exe_options = {
         "pipeline",
         "output",
         "utils",
+        "whatsapp",
     ],
     # Include esplicito per import dinamico usato da opentelemetry context loader.
     "includes": [

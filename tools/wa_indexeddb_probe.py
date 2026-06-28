@@ -37,8 +37,15 @@ SIGNAL_TOKENS = [
     b"WASignalStore", b"crypto", b"encKey", b"macKey", b"ciphertext",
 ]
 
-# Dimensione massima per file da scandire integralmente (per restare veloci).
-MAX_SCAN_BYTES = 16 * 1024 * 1024
+# Limiti di scansione per restare veloci (basta un campione per capire il formato).
+MAX_SCAN_PER_FILE = 4 * 1024 * 1024     # byte letti per singolo file
+MAX_SCAN_TOTAL = 160 * 1024 * 1024      # byte totali scanditi per store
+MAX_SCAN_FILES = 60                     # numero massimo di file (i più grandi)
+
+# Tabella per contare i byte stampabili a velocità C (bytes.translate).
+_NONPRINTABLE = bytes(
+    c for c in range(256) if not (9 <= c <= 13 or 32 <= c <= 126)
+)
 
 
 def find_package_root(explicit: str | None) -> Path | None:
@@ -96,14 +103,17 @@ def scan_tokens(d: Path) -> tuple[dict, list[str], float]:
         [p for p in d.iterdir()
          if p.is_file() and (p.suffix in (".ldb", ".log") or p.name.startswith("MANIFEST"))],
         key=lambda p: p.stat().st_size, reverse=True,
-    )
+    )[:MAX_SCAN_FILES]
     for f in files:
+        if scanned >= MAX_SCAN_TOTAL:
+            break
         try:
-            data = f.read_bytes()[:MAX_SCAN_BYTES]
+            data = f.read_bytes()[:MAX_SCAN_PER_FILE]
         except OSError:
             continue
         scanned += len(data)
-        printable += sum(1 for c in data if 9 <= c <= 13 or 32 <= c <= 126)
+        # Conteggio byte stampabili a velocità C: elimina i non-stampabili e misura.
+        printable += len(data.translate(None, _NONPRINTABLE))
         for t in SIGNAL_TOKENS:
             counts[t] += data.count(t)
         # Cattura qualche contesto attorno a 'fromMe' e a un JID per capire il formato.

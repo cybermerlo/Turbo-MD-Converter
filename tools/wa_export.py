@@ -62,12 +62,32 @@ def cmd_list(reader: WhatsAppDesktopReader) -> int:
     return 0
 
 
+def _index_progress(n: int) -> None:
+    from whatsapp.desktop_indexeddb import PROGRESS_FROM_CACHE, PROGRESS_OPENING
+    if n == PROGRESS_FROM_CACHE:
+        msg = "da cache…"
+    elif n == PROGRESS_OPENING:
+        msg = "apertura archivio (~1 min)…"
+    else:
+        msg = f"{n:,} messaggi…".replace(",", ".")
+    print(f"\r  indice mittenti: {msg:<40}", end="", file=sys.stderr, flush=True)
+
+
 def cmd_export(reader: WhatsAppDesktopReader, args) -> int:
     chats = reader.list_chats()
     chat = _select_chat(chats, args.chat)
     if not chat:
         print(f"Chat '{args.chat}' non trovata. Usa 'list' per vedere gli indici.")
         return 2
+    if not args.no_senders:
+        # Carica l'indice (mittenti + nomi gruppo) con progress; ~1-2 min la
+        # prima volta, poi da cache. Senza questo, read_messages resta solo testo.
+        print("Carico l'indice mittenti dall'IndexedDB (la 1ª volta ~1-2 minuti)…",
+              file=sys.stderr)
+        ok = reader.ensure_index(progress=_index_progress)
+        print(f"\r  indice mittenti: {'pronto' if ok else 'non disponibile':<30}",
+              file=sys.stderr)
+        chat = _select_chat(reader.list_chats(), chat.chat_id) or chat
     since = _parse_date(args.since) if args.since else None
     until = _parse_date(args.until) + 86399 if args.until else None
     msgs = reader.read_messages(chat.chat_id, since, until, args.search)
@@ -80,7 +100,8 @@ def cmd_export(reader: WhatsAppDesktopReader, args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Export chat WhatsApp Desktop (v1 testo)")
+    ap = argparse.ArgumentParser(
+        description="Export chat WhatsApp Desktop (testo + mittenti)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("list", help="elenca le chat")
     ex = sub.add_parser("export", help="esporta una chat in Markdown")
@@ -89,6 +110,8 @@ def main() -> int:
     ex.add_argument("--until", help="data fine YYYY-MM-DD (inclusa)")
     ex.add_argument("--search", help="filtra i messaggi che contengono questo testo")
     ex.add_argument("--out", help="file .md di destinazione")
+    ex.add_argument("--no-senders", action="store_true",
+                    help="non leggere l'IndexedDB: solo testo, più veloce")
     ap.add_argument("--localstate", help="percorso LocalState (auto se omesso)")
     ap.add_argument("--oduid", help="ODUID hex (override, se necessario)")
     args = ap.parse_args()

@@ -58,6 +58,12 @@ build_exe_options = {
         "output",
         "utils",
         "whatsapp",
+        # Lettore IndexedDB vendorizzato (import differito + relativi: lo
+        # elenchiamo esplicitamente così cx_Freeze lo impacchetta sicuramente).
+        "whatsapp._vendor",
+        "whatsapp._vendor.ccl_chromium_reader",
+        "whatsapp._vendor.ccl_chromium_reader.serialization_formats",
+        "whatsapp._vendor.ccl_chromium_reader.storage_formats",
     ],
     # Include esplicito per import dinamico usato da opentelemetry context loader.
     "includes": [

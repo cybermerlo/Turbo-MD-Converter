@@ -53,8 +53,8 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         ctk.CTkLabel(
             self,
             text="Legge i messaggi dall'app WhatsApp Desktop installata su questo "
-                 "PC (solo locale, nessun rischio ban). Solo testo: niente mittente "
-                 "per i gruppi né media.",
+                 "PC (solo locale, nessun rischio ban). Importa testo e mittenti, "
+                 "con nomi di gruppi e contatti. I media non sono inclusi.",
             font=theme.font(10), text_color=theme.INK_3,
             justify="left", wraplength=700,
         ).pack(padx=18, pady=(0, 8), anchor="w")
@@ -99,6 +99,15 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         self._msg_search = ctk.CTkEntry(srow, placeholder_text="(facoltativo)")
         self._msg_search.pack(side="left", padx=(6, 0), fill="x", expand=True)
 
+        # Opzione mittenti (l'indice è pesante: lo carichiamo solo se richiesto,
+        # alla creazione dell'MD; la 1ª volta ~1-2 min, poi è in cache).
+        self._senders_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            self, text="Includi mittenti e nomi gruppi  (1ª volta ~1-2 min, poi in cache)",
+            variable=self._senders_var, font=theme.font(11),
+            text_color=theme.INK_2, onvalue=True, offvalue=False,
+        ).pack(padx=18, pady=(2, 2), anchor="w")
+
         # Azioni
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.pack(padx=18, pady=(6, 14), fill="x")
@@ -127,6 +136,8 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
         threading.Thread(target=self._load_thread, daemon=True).start()
 
     def _load_thread(self):
+        # Solo decifratura + lista (veloce, ~15s): la finestra resta REATTIVA.
+        # L'indice mittenti (pesante) si carica solo alla creazione dell'MD.
         from whatsapp.desktop_crypto import WhatsAppDesktopError
         from whatsapp.desktop_reader import WhatsAppDesktopReader
         try:
@@ -142,16 +153,42 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
 
     def _on_loaded(self, chats):
         self._chats = chats
-        self._bar.stop()
-        self._bar.pack_forget()
-        self._status.configure(text=f"{len(chats)} chat trovate. Seleziona una chat.")
+        self._set_idle()
+        self._status.configure(
+            text=f"{len(chats)} chat trovate. Seleziona una chat.")
         self._render_chats()
 
     def _on_load_error(self, msg):
-        self._bar.stop()
-        self._bar.pack_forget()
+        self._set_idle()
         self._status.configure(text=f"Impossibile leggere WhatsApp Desktop: {msg}",
                                text_color="#b04a36")
+
+    # ─── Barra di avanzamento (busy/idle) ─────────────────────────────────
+    def _set_busy(self, text: str):
+        self._status.configure(text=text, text_color=theme.INK_3)
+        if not self._bar.winfo_ismapped():
+            self._bar.pack(padx=18, pady=(0, 8), fill="x", after=self._status)
+        self._bar.start()
+
+    def _set_idle(self):
+        try:
+            self._bar.stop()
+            self._bar.pack_forget()
+        except Exception:
+            pass
+
+    def _index_progress(self, n: int):
+        self._safe_after(self._set_index_status, n)
+
+    def _set_index_status(self, n: int):
+        from whatsapp.desktop_indexeddb import PROGRESS_FROM_CACHE, PROGRESS_OPENING
+        if n == PROGRESS_FROM_CACHE:
+            txt = "Mittenti: caricati dalla cache…"
+        elif n == PROGRESS_OPENING:
+            txt = "Apertura archivio mittenti… (la 1ª volta richiede ~1 minuto)"
+        else:
+            txt = f"Lettura mittenti… {n:,} messaggi".replace(",", ".")
+        self._status.configure(text=txt, text_color=theme.INK_3)
 
     def _render_chats(self):
         for w in self._list.winfo_children():
@@ -171,6 +208,10 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
             )
             btn.pack(fill="x", padx=4, pady=2)
             self._row_buttons[c.chat_id] = btn
+        if self._selected:  # mantieni evidenziata la chat selezionata
+            sel = self._row_buttons.get(self._selected.chat_id)
+            if sel:
+                sel.configure(fg_color=theme.AMBER)
         if not shown:
             ctk.CTkLabel(self._list, text="Nessuna chat corrisponde alla ricerca.",
                          font=theme.font(11), text_color=theme.INK_4).pack(pady=20)
@@ -218,34 +259,63 @@ class WhatsAppImportWindow(ctk.CTkToplevel):
                                    text_color="#b04a36")
             return
         query = self._msg_search.get().strip() or None
+        want_senders = bool(self._senders_var.get())
         self._create_btn.configure(state="disabled")
         self._result.configure(text="Creazione in corso…", text_color=theme.INK_3)
+        if want_senders:
+            self._set_busy("Preparazione mittenti…")
         chat = self._selected
         threading.Thread(
-            target=self._create_thread, args=(chat, since, until, query), daemon=True
+            target=self._create_thread,
+            args=(chat, since, until, query, want_senders), daemon=True
         ).start()
 
-    def _create_thread(self, chat, since, until, query):
-        from whatsapp.desktop_reader import build_markdown
+    def _create_thread(self, chat, since, until, query, want_senders):
+        from whatsapp.desktop_reader import Chat, build_markdown
         try:
+            # L'indice mittenti si carica QUI (solo se richiesto): pesante la 1ª
+            # volta, poi da cache. La finestra è già reattiva: blocca solo l'export.
+            if want_senders:
+                self._reader.ensure_index(progress=self._index_progress)
             msgs = self._reader.read_messages(chat.chat_id, since, until, query)
+            # Il vero nome del gruppo può arrivare solo ora (dall'indice):
+            name = self._reader.chat_name(chat.chat_id)
+            chat = Chat(chat.chat_id, name, chat.kind, chat.message_count, chat.last_ts)
             md = build_markdown(chat, msgs)
-            out = app_capture_dir() / f"WhatsApp - {_safe_name(chat.name)}.md"
+            out = app_capture_dir() / f"WhatsApp - {_safe_name(name)}.md"
             out.write_text(md, encoding="utf-8")
             self._safe_after(self._on_created, out, len(msgs))
         except Exception as e:  # noqa: BLE001
             self._safe_after(self._on_create_error, str(e))
 
     def _on_created(self, path: Path, n: int):
+        self._set_idle()
         self._create_btn.configure(state="normal")
+        self._status.configure(text=f"{len(self._chats)} chat. Seleziona una chat.",
+                               text_color=theme.INK_3)
         self._result.configure(text=f"Creato: {path.name} ({n} messaggi)",
                                text_color="#2a7d3a")
+        # se l'indice è ora disponibile, aggiorna i nomi (gruppi) nella lista
+        if self._reader and self._reader.has_index:
+            self._refresh_names()
         if callable(self._on_chat_ready):
             self._on_chat_ready(path)
 
     def _on_create_error(self, msg):
+        self._set_idle()
         self._create_btn.configure(state="normal")
         self._result.configure(text=f"Errore: {msg}", text_color="#b04a36")
+
+    def _refresh_names(self):
+        """Riallinea i nomi chat (gruppi) dopo che l'indice è stato caricato."""
+        try:
+            updated = {c.chat_id: c for c in self._reader.list_chats()}
+        except Exception:  # noqa: BLE001
+            return
+        self._chats = [updated.get(c.chat_id, c) for c in self._chats]
+        if self._selected:
+            self._selected = updated.get(self._selected.chat_id, self._selected)
+        self._render_chats()
 
     # ─── Chiusura ─────────────────────────────────────────────────────────
     def _on_close(self):

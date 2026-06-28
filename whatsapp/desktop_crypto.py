@@ -220,6 +220,32 @@ def find_localstate() -> Path | None:
     return None
 
 
+def source_fingerprint(localstate: Path | None = None) -> str | None:
+    """Impronta dei DB sorgente CIFRATI (genericStorage/contacts + i loro -wal).
+    Serve a sapere se la decifratura in cache è ancora valida: cambia appena
+    WhatsApp scrive nuovi messaggi → si ri-decifra (dati freschi); se WhatsApp è
+    fermo, l'impronta è stabile → si riusa la decifratura (istantaneo). None se i
+    file non sono individuabili."""
+    ls = localstate or find_localstate()
+    if not ls or not ls.is_dir():
+        return None
+    sessions = ls / "sessions"
+    if not sessions.is_dir():
+        return None
+    parts = []
+    for pat in ("*/genericStorage.db", "*/genericStorage.db-wal",
+                "*/contacts.db", "*/contacts.db-wal"):
+        for f in sorted(sessions.glob(pat)):
+            try:
+                st = f.stat()
+                parts.append(f"{f.parent.name}/{f.name}|{st.st_size}|{st.st_mtime_ns}")
+            except OSError:
+                pass
+    if not parts:
+        return None
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 @dataclass
 class DecryptedStore:
     """Percorsi ai DB decifrati (SQLite standard) in una cartella temporanea."""

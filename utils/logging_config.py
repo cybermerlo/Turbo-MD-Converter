@@ -7,6 +7,15 @@ from pathlib import Path
 
 def setup_logging(log_file: Path | None = None, level: int = logging.INFO) -> None:
     """Configure logging with console and optional file output."""
+    # La console Windows (cp1252) non sa codificare emoji/frecce/accenti rari: i
+    # nomi chat WhatsApp ne sono pieni. Senza questo, un log con quei caratteri
+    # solleva UnicodeEncodeError nell'handler. UTF-8 + backslashreplace = niente crash.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
 

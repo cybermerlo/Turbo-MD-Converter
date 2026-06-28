@@ -2,8 +2,9 @@
 
 Il probe ha confermato che l'archivio messaggi sta in
 `...\\IndexedDB\\https_web.whatsapp.com_0.indexeddb.leveldb` ed è IN CHIARO, ma
-nel formato IndexedDB di Chromium + serializzazione V8. Questo spike usa
-`ccl_chromium_reader` (MIT, puro Python) per:
+nel formato IndexedDB di Chromium + serializzazione V8. Questo spike usa il
+lettore `ccl_chromium_reader` **vendorizzato** in `whatsapp/_vendor/` (MIT, puro
+Python — nessun pip richiesto) per:
 
   1. copiare i file LevelDB in una cartella temporanea (il DB live è bloccato),
   2. elencare database e object store dell'IndexedDB di WhatsApp,
@@ -12,11 +13,7 @@ nel formato IndexedDB di Chromium + serializzazione V8. Questo spike usa
 
 NON si connette a nulla, NON modifica nulla, NON scrive nella cartella di WA.
 
-PREPARAZIONE (una volta sola, nel venv del progetto):
-
-    pip install ccl_chromium_reader
-
-USO (Windows, con WhatsApp Desktop installato):
+USO (Windows, con WhatsApp Desktop installato — nessuna preparazione richiesta):
 
     python tools/wa_indexeddb_spike.py
     python tools/wa_indexeddb_spike.py --samples 4 --store message
@@ -33,6 +30,8 @@ import sys
 import tempfile
 import traceback
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 PACKAGE_GLOB = "5319275A.WhatsAppDesktop_*"
 LEVELDB_REL = r"LocalCache\EBWebView\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb"
@@ -98,12 +97,11 @@ def run(leveldb: Path, samples: int, only_store: str | None) -> int:
     print(" Spike IndexedDB WhatsApp Desktop — scoperta schema mittenti")
     print("=" * 66)
     try:
-        import ccl_chromium_reader  # noqa: F401
-        from ccl_chromium_reader import ccl_chromium_indexeddb
-        ver = getattr(ccl_chromium_reader, "__version__", "?")
-        print(f"ccl_chromium_reader: OK (v{ver})")
-    except ImportError:
-        print("[X] manca ccl_chromium_reader. Esegui:  pip install ccl_chromium_reader")
+        from whatsapp._vendor.ccl_chromium_reader import ccl_chromium_indexeddb
+        ver = getattr(ccl_chromium_indexeddb, "__version__", "vendored")
+        print(f"ccl_chromium_reader (vendored): OK ({ver})")
+    except ImportError as e:
+        print(f"[X] import del lettore IndexedDB vendorizzato fallito: {e}")
         return 2
 
     print(f"LevelDB (sorgente): {leveldb}")
@@ -199,7 +197,18 @@ def run(leveldb: Path, samples: int, only_store: str | None) -> int:
     return 0
 
 
+def _force_utf8_stdout() -> None:
+    """La console Windows (cp1252) non sa stampare emoji/accenti/frecce: i dati
+    di WhatsApp ne sono pieni. Forziamo UTF-8 con sostituzione invece di crashare."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+
 def main() -> int:
+    _force_utf8_stdout()
     ap = argparse.ArgumentParser(description="Spike IndexedDB WhatsApp Desktop")
     ap.add_argument("--leveldb", default=None, help="Percorso cartella .indexeddb.leveldb")
     ap.add_argument("--samples", type=int, default=3, help="Record di esempio per store")

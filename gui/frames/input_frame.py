@@ -17,6 +17,7 @@ from utils.system import open_with_system
 SUPPORTED_EXTENSIONS = (
     ".pdf", ".txt", ".eml", ".msg", ".docx", ".doc", ".html", ".htm", ".md",
     ".xml", ".rtf",
+    ".xlsx", ".xlsm", ".ods", ".csv", ".tsv", ".odt", ".odp", ".pptx",
     ".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif",
     ".mp3", ".wav", ".flac", ".m4a", ".ogg", ".mp4", ".opus",
     ".p7m", ".zip", ".7z", ".tar", ".tgz",
@@ -428,11 +429,12 @@ class InputFrame(ctk.CTkFrame):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
             filetypes=[
-                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.doc *.html *.htm *.md *.xml *.rtf *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif *.mp3 *.wav *.flac *.m4a *.ogg *.mp4 *.opus *.p7m *.zip *.7z *.tar *.tgz"),
+                ("Documenti supportati", "*.pdf *.txt *.eml *.msg *.docx *.doc *.html *.htm *.md *.xml *.rtf *.xlsx *.xlsm *.ods *.csv *.tsv *.odt *.odp *.pptx *.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif *.mp3 *.wav *.flac *.m4a *.ogg *.mp4 *.opus *.p7m *.zip *.7z *.tar *.tgz"),
                 ("PDF", "*.pdf"),
                 ("Immagini", "*.jpg *.jpeg *.png *.webp *.tiff *.tif *.bmp *.gif"),
                 ("Testo ed Email", "*.txt *.eml *.msg *.md *.html *.htm *.xml *.rtf"),
-                ("Office/RTF", "*.docx *.doc *.rtf"),
+                ("Office/OpenDocument", "*.docx *.doc *.rtf *.odt *.pptx *.odp"),
+                ("Fogli di calcolo", "*.xlsx *.xlsm *.ods *.csv *.tsv"),
                 ("Audio / Video", "*.mp3 *.wav *.flac *.m4a *.ogg *.mp4 *.opus"),
                 ("Firmati e Archivi", "*.p7m *.zip *.7z *.tar *.tgz"),
                 ("Tutti i file", "*.*"),

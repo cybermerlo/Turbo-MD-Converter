@@ -21,10 +21,16 @@ from pipeline.email_sources import (
 )
 from pipeline.models import EmailAttachmentDocument
 from pipeline.text_extractors import (
+    extract_csv_text,
     extract_doc_text,
     extract_docx_text,
     extract_html_text,
+    extract_ods_text,
+    extract_odp_text,
+    extract_odt_text,
+    extract_pptx_text,
     extract_rtf_text,
+    extract_xlsx_text,
     extract_xml_text,
 )
 
@@ -97,6 +103,18 @@ class AttachmentProcessor:
                 return extract_docx_text(att_path)
             if suffix == ".doc":
                 return extract_doc_text(att_path)
+            if suffix in (".xlsx", ".xlsm"):
+                return extract_xlsx_text(att_path)
+            if suffix == ".ods":
+                return extract_ods_text(att_path)
+            if suffix == ".odt":
+                return extract_odt_text(att_path)
+            if suffix == ".odp":
+                return extract_odp_text(att_path)
+            if suffix == ".pptx":
+                return extract_pptx_text(att_path)
+            if suffix in (".csv", ".tsv"):
+                return extract_csv_text(att_path)
             if suffix in (".html", ".htm"):
                 return extract_html_text(att_path)
             if suffix == ".xml":
@@ -180,6 +198,24 @@ class AttachmentProcessor:
         elif suffix == ".doc":
             text = extract_doc_text(file_path)
             self.emit_log("File DOC legacy letto direttamente", "INFO")
+        elif suffix in (".xlsx", ".xlsm"):
+            text = extract_xlsx_text(file_path)
+            self.emit_log("Foglio di calcolo XLSX letto direttamente", "INFO")
+        elif suffix == ".ods":
+            text = extract_ods_text(file_path)
+            self.emit_log("Foglio di calcolo ODS letto direttamente", "INFO")
+        elif suffix == ".odt":
+            text = extract_odt_text(file_path)
+            self.emit_log("Documento ODT letto direttamente", "INFO")
+        elif suffix == ".odp":
+            text = extract_odp_text(file_path)
+            self.emit_log("Presentazione ODP letta direttamente", "INFO")
+        elif suffix == ".pptx":
+            text = extract_pptx_text(file_path)
+            self.emit_log("Presentazione PPTX letta direttamente", "INFO")
+        elif suffix in (".csv", ".tsv"):
+            text = extract_csv_text(file_path)
+            self.emit_log("File CSV/TSV letto direttamente", "INFO")
         elif suffix in (".html", ".htm"):
             text = extract_html_text(file_path)
             self.emit_log("File HTML letto direttamente", "INFO")

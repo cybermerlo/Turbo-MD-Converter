@@ -62,6 +62,51 @@ class DirectReadRoutingTests(unittest.TestCase):
         self.assertEqual([], pending)
         self.assertTrue(any("XML" in m for m, _ in logs))
 
+    def test_xlsx_input_read_directly(self):
+        from openpyxl import Workbook
+
+        logs: list[tuple[str, str]] = []
+        ap = _make_processor(logs)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dati.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.append(["Voce", "Valore"])
+            ws.append(["Totale", 42])
+            wb.save(p)
+            result, pending = ap.read_text_file(p)
+        self.assertIn("Voce", result.combined_text)
+        self.assertIn("42", result.combined_text)
+        self.assertEqual([], pending)
+        self.assertTrue(any("XLSX" in m for m, _ in logs))
+
+    def test_csv_input_read_directly(self):
+        logs: list[tuple[str, str]] = []
+        ap = _make_processor(logs)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "dati.csv"
+            p.write_text("Col1,Col2\nA,B\n", encoding="utf-8")
+            result, pending = ap.read_text_file(p)
+        self.assertIn("Col1", result.combined_text)
+        self.assertIn("| A | B |", result.combined_text)
+        self.assertTrue(any("CSV" in m for m, _ in logs))
+
+    def test_xlsx_as_attachment_via_to_text(self):
+        from openpyxl import Workbook
+
+        logs: list[tuple[str, str]] = []
+        ap = _make_processor(logs)
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "allegato.xlsx"
+            wb = Workbook()
+            ws = wb.active
+            ws.append(["Chiave", "Numero"])
+            ws.append(["riga", 7])
+            wb.save(p)
+            text = ap.to_text(p)
+        self.assertIn("Chiave", text)
+        self.assertIn("7", text)
+
     def test_unsupported_attachment_skipped_as_warning(self):
         logs: list[tuple[str, str]] = []
         ap = _make_processor(logs)

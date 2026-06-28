@@ -47,6 +47,7 @@ build_exe_options = {
         "elevenlabs",
         "Cryptodome",       # usato da py7zr per gli archivi .7z
         "cryptography",     # decifratura WhatsApp Desktop (AES) + transitive
+        "openpyxl",         # lettura fogli di calcolo .xlsx/.xlsm
         "google.protobuf",  # transitiva di google-genai / langextract
         "sqlite3",
         # moduli dell'app

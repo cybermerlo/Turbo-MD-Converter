@@ -11,4 +11,6 @@ ARCHIVE_EXTENSIONS = (".zip", ".7z", ".tar", ".tgz")
 DIRECT_READ_FORMATS = frozenset((
     ".txt", ".eml", ".msg", ".md", ".docx", ".doc", ".html", ".htm", ".xml",
     ".rtf", ".p7m", ".zip", ".7z", ".tar", ".tgz",
+    # Fogli di calcolo, documenti e presentazioni Office/OpenDocument + CSV
+    ".xlsx", ".xlsm", ".ods", ".odt", ".odp", ".pptx", ".csv", ".tsv",
 ))

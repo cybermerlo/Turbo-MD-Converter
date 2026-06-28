@@ -5,7 +5,9 @@ Guida rapida per chi (umano o agente) lavora su questo repository.
 ## Cos'è
 App desktop **Windows in Python puro** (CustomTkinter) che converte documenti
 eterogenei in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`),
-documenti Office (`.docx`/`.doc`/`.rtf`), `.xml`, archivi e firmati `.p7m`. Usa
+documenti Office (`.docx`/`.doc`/`.rtf`/`.odt`), fogli di calcolo
+(`.xlsx`/`.ods`/`.csv`), presentazioni (`.pptx`/`.odp`), `.xml`, archivi e
+firmati `.p7m`. Usa
 OCR (Google Gemini), trascrizione audio (ElevenLabs Scribe v2, con diarization)
 ed estrazione strutturata opzionale (LangExtract). Nessun runtime Node/JS.
 
@@ -46,7 +48,8 @@ ed estrazione strutturata opzionale (LangExtract). Nessun runtime Node/JS.
 Ogni input è un `Path`; **ogni input → un file `.md`**.
 `DocumentProcessor._acquire_text()` instrada per estensione: video→trascrizione
 audio + descrizione visiva, audio→trascrizione, immagini/PDF→OCR, suffissi in
-`DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.docx`/`.doc`, `.xml`,
+`DIRECT_READ_FORMATS`→lettura diretta (email, archivi, `.docx`/`.doc`, fogli di
+calcolo `.xlsx`/`.ods`/`.csv`, presentazioni `.pptx`/`.odp`, `.odt`, `.xml`,
 `.rtf`, `.html`, `.p7m`). Le email **uniscono corpo + allegati in un unico
 testo** → un solo MD (vedi `join_email_and_attachments`).
 `AttachmentProcessor.to_text()` è **ricorsivo**: allegati annidati (una `.eml`
@@ -107,9 +110,15 @@ come dipendenza di `extract-msg` — che legge lo stream `WordDocument`+piece ta
 se cifrato/danneggiato solleva un errore chiaro che invita a risalvare in
 `.docx`/`.rtf`), `.rtf` (striprtf), `.html`/`.htm` (BeautifulSoup), `.xml`
 (`extract_xml_text`: ElementTree→BeautifulSoup→raw) e `.txt`/`.md` (lettura
-diretta). Aggiungere un formato = nuova `extract_*` + suffisso in
-`DIRECT_READ_FORMATS`, `SUPPORTED_EXTENSIONS`, i due dispatch e (cosmetico)
-`gui/theme.py EXT_TO_BADGE`.
+diretta). **Fogli di calcolo e presentazioni** (`extract_xlsx_text` su openpyxl
+in `data_only` → tabelle Markdown con date/numeri formattati; `extract_ods_text`,
+`extract_odt_text`, `extract_odp_text`, `extract_pptx_text` sono pure-python
+zip+xml con ElementTree; `extract_csv_text` su `csv` stdlib con rilevamento del
+delimitatore). I fogli diventano una tabella Markdown per foglio, le presentazioni
+una sezione `## Diapositiva N` per slide; un helper condiviso `_rows_to_markdown`
+rifila righe/colonne vuote ed esegue l'escape di `|`. Aggiungere un formato =
+nuova `extract_*` + suffisso in `DIRECT_READ_FORMATS`, `SUPPORTED_EXTENSIONS`, i
+due dispatch e (cosmetico) `gui/theme.py EXT_TO_BADGE`.
 
 ## Import chat da WhatsApp Desktop (branch `claude/whatsapp-web-import`)
 Reimporta le chat **leggendo il DB locale dell'app ufficiale WhatsApp Desktop**

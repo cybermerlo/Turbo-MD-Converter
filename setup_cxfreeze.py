@@ -46,6 +46,7 @@ build_exe_options = {
         "tkinterdnd2",
         "elevenlabs",
         "Cryptodome",       # usato da py7zr per gli archivi .7z
+        "openpyxl",         # lettura fogli di calcolo .xlsx/.xlsm
         "google.protobuf",  # transitiva di google-genai / langextract
         "sqlite3",
         # moduli dell'app

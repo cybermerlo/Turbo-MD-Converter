@@ -2,8 +2,9 @@
 
 App desktop **Windows** (Python + CustomTkinter) che converte documenti eterogenei
 in **Markdown**: PDF, immagini, audio/video, email (`.eml`/`.msg`), documenti
-Office (`.docx`/`.doc`/`.rtf`), `.xml`, archivi (`.zip`/`.7z`/`.tar.*`) e firmati
-`.p7m`.
+Office (`.docx`/`.doc`/`.rtf`), fogli di calcolo (`.xlsx`/`.ods`/`.csv`),
+presentazioni (`.pptx`/`.odp`), `.odt`, `.xml`, archivi (`.zip`/`.7z`/`.tar.*`) e
+firmati `.p7m`.
 
 Usa **Google Gemini** per l'OCR e la descrizione visiva dei video, **ElevenLabs
 Scribe v2** per la trascrizione audio (con riconoscimento degli interlocutori) ed
@@ -17,8 +18,10 @@ un file `.md`**.
 - **Audio/video** → trascrizione; i video producono un solo MD con
   `## Trascrizione audio` + `## Descrizione visiva`.
 - **Email e archivi**: corpo + allegati uniti (o separati) in Markdown.
-- **Documenti Office e XML**: `.docx`, `.doc` (Word 97-2003 legacy), `.rtf` e
-  `.xml` letti direttamente, senza OCR.
+- **Documenti Office e XML**: `.docx`, `.doc` (Word 97-2003 legacy), `.rtf`,
+  `.odt` e `.xml` letti direttamente, senza OCR.
+- **Fogli di calcolo e presentazioni**: `.xlsx`/`.xlsm`, `.ods`, `.csv`/`.tsv`,
+  `.pptx` e `.odp` convertiti in tabelle/sezioni Markdown, senza OCR.
 - **Rinomina automatica** dei file via LLM e **check finale errori** (QA) opzionali.
 - **Auto-aggiornamento** dall'ultima release GitHub.
 

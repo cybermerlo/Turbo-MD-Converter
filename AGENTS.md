@@ -111,6 +111,81 @@ diretta). Aggiungere un formato = nuova `extract_*` + suffisso in
 `DIRECT_READ_FORMATS`, `SUPPORTED_EXTENSIONS`, i due dispatch e (cosmetico)
 `gui/theme.py EXT_TO_BADGE`.
 
+## Import chat da WhatsApp Desktop (branch `claude/whatsapp-web-import`)
+Reimporta le chat **leggendo il DB locale dell'app ufficiale WhatsApp Desktop**
+(build WebView2, pacchetto `5319275A.WhatsAppDesktop_*`). **Nessuna connessione,
+nessun rischio ban**: si decifra e si legge solo ciò che è già su disco.
+Vincoli di prodotto fissati dall'utente: **niente export manuale**, **rischio
+ban inaccettabile**, va bene rinunciare ai messaggi più vecchi di ~1 mese.
+
+**Portabilità**: funziona su *qualunque* PC dove WhatsApp Desktop è installato e
+loggato, ma ognuno legge **solo i propri dati locali** — l'ODUID deriva dal
+`RandomSeed` del TPM (per-macchina) e DPAPI-NG usa `LOCAL=user` (per-utente).
+Non legge PC remoti/altrui. Serve la build **WebView2** (≥ dic 2025), non la
+vecchia. "WhatsApp Web" nel browser ≠ "WhatsApp Desktop" (app installata): si
+legge l'app installata.
+
+### Stato attuale
+- **v1 (solo testo): FUNZIONA**, end-to-end in GUI (testato dall'utente). Importa
+  testo + timestamp, raggruppati per giorno; nomi chat risolti dai contatti.
+  **Non** importa i media e **non** mostra il mittente per-messaggio.
+- **In corso: i MITTENTI** (richiesta esplicita dell'utente). Vedi sotto.
+
+### Architettura
+- `whatsapp/desktop_crypto.py` — catena di decifratura → `decrypt_databases()`
+  ritorna `DecryptedStore(workdir, messages_db, contacts_db)` (file SQLite **in
+  chiaro standard**) con `.cleanup()`. Windows-only. Errori → `WhatsAppDesktopError`.
+- `whatsapp/desktop_reader.py` — `WhatsAppDesktopReader` (context manager:
+  `list_chats`, `read_messages(chat_id, since, until, query)`, risoluzione nomi da
+  `contacts.db`) + `build_markdown(chat, messages)`. **Solo testo** in v1.
+- `gui/frames/whatsapp_import_window.py` — `WhatsAppImportWindow(master,
+  on_chat_ready)`: decifra in thread, lista chat ricercabile, filtro periodo/testo,
+  "Crea MD" → scrive in `app_capture_dir()` → callback aggiunge agli input.
+  Agganciata da `gui/app.py` (`_open_whatsapp_import` / `_on_whatsapp_chat_ready`)
+  via il pulsante in `gui/frames/input_frame.py` (`on_import_whatsapp`).
+- `tools/wa_export.py` — CLI `list` / `export`. `tools/wa_desktop_probe.py` —
+  diagnostico read-only. `tools/wa_desktop_decrypt_spike.py` — spike decifratura
+  completo (checkpoint [1]-[7], validato: 264.725 messaggi).
+- Dipendenze: `cryptography` (AES; fallback Cryptodome/Crypto). In `setup_cxfreeze.py`
+  i pacchetti `whatsapp` e `cryptography` sono già inclusi.
+- Piano/ricerca: `docs/plans/whatsapp-desktop-import.md`.
+
+### Catena di decifratura (validata sul PC dell'utente)
+`RandomSeed` (registro `HKLM\SYSTEM\CurrentControlSet\Services\TPM\ODUID`,
+leggibile **senza admin**) → `ODUID = SHA256(UTF-16LE("cv1g1gv") || RandomSeed)`
+→ DPAPI-NG: `NCryptProtectSecret(staticBytes, "LOCAL=user")[:32]` = sessionDBSecret
+→ decifra `session.db` → **clientKey** (48B; oracolo: `SHA1(clientKey).hex().upper()`
+== nome cartella `sessions/<...>`) → dbKey (PBKDF2-HMAC-SHA256(clientKey, salt=ODUID,
+10000)=auxKey; IV analogo; `dbKey = AES-256-CBC-PKCS7(staticBytes, auxKey, IV)[:32]`)
+→ decifra `nativeSettings.db` → chiavi tipo1/tipo2 → `genericStorage.db` (messaggi)
+e `contacts.db`. **Cifratura per-pagina**: AES-256-OFB, page=4096B,
+`IV = struct.pack("<I", pageNumber) || page[-12:]`; dopo il decrypt ripristina i
+byte `[16:24]` dall'originale. WAL: header 32B as-is, frame = 24B (pageNumber =
+big-endian primi 4B) + 4096B. `staticBytes = 23a7f19c11e5bd784235c96f85d24913`.
+
+### Mittenti — dove siamo e prossimo passo
+- **`genericStorage.db` NON ha i mittenti**: è la **cache di ricerca full-text**.
+  Schema `message(rowid, id, chatId, timestamp, text)` dove `id` è un docid
+  sintetico (`999999231`…), NON la chiave WhatsApp. Niente `fromMe`, niente
+  mittente, niente media. Confermato sui dati reali.
+- **Il vero archivio è l'IndexedDB del WebView2**, in chiaro ma in formato
+  **Chromium IndexedDB + serializzazione V8** (non SQLite):
+  `...\LocalCache\EBWebView\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb`
+  (≈323 MB). Il probe (`tools/wa_indexeddb_probe.py`) ha trovato in chiaro:
+  `fromMe` (prefisso della chiave messaggio `false_<chatJid>_<msgId>[_<sender>@lid]`),
+  `senderUserJid`/`participant`, e i riferimenti media `mediaKey`/`directPath`/`mimetype`.
+- **Lettore scelto**: `ccl_chromium_reader` (MIT, **puro Python**, pip, OK in
+  cx_Freeze). Va letta una **COPIA** dei file (DB live bloccato da WhatsApp).
+- **PROSSIMO STEP** (in attesa dell'output dall'utente): eseguire sul PC
+  `pip install ccl_chromium_reader` poi `python tools/wa_indexeddb_spike.py` →
+  scopre i **nomi degli object store** e i **campi dei valori** (mittente, fromMe,
+  timestamp, testo). Poi costruire il reader v2:
+  - chat 1:1 → mittente da `fromMe` (io / contatto);
+  - gruppi → `participant` JID/LID risolto a nome via `contacts.db`;
+  - testo: riusare `genericStorage`, unito ai mittenti per `(chatId, timestamp)`
+    (robusto anche se il corpo nell'IndexedDB fosse offuscato).
+- **Media**: differiti (best-effort); i riferimenti ci sono (`directPath`/`mediaKey`).
+
 ## Convenzioni e gotcha
 - **UI e commenti in italiano.**
 - **Modalità output** (`config.output_mode`): `accanto` (di fianco al sorgente,

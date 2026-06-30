@@ -120,6 +120,130 @@ rifila righe/colonne vuote ed esegue l'escape di `|`. Aggiungere un formato =
 nuova `extract_*` + suffisso in `DIRECT_READ_FORMATS`, `SUPPORTED_EXTENSIONS`, i
 due dispatch e (cosmetico) `gui/theme.py EXT_TO_BADGE`.
 
+## Import chat da WhatsApp Desktop (branch `claude/whatsapp-web-import`)
+Reimporta le chat **leggendo il DB locale dell'app ufficiale WhatsApp Desktop**
+(build WebView2, pacchetto `5319275A.WhatsAppDesktop_*`). **Nessuna connessione,
+nessun rischio ban**: si decifra e si legge solo ciò che è già su disco.
+Vincoli di prodotto fissati dall'utente: **niente export manuale**, **rischio
+ban inaccettabile**, va bene rinunciare ai messaggi più vecchi di ~1 mese.
+
+**Portabilità**: funziona su *qualunque* PC dove WhatsApp Desktop è installato e
+loggato, ma ognuno legge **solo i propri dati locali** — l'ODUID deriva dal
+`RandomSeed` del TPM (per-macchina) e DPAPI-NG usa `LOCAL=user` (per-utente).
+Non legge PC remoti/altrui. Serve la build **WebView2** (≥ dic 2025), non la
+vecchia. "WhatsApp Web" nel browser ≠ "WhatsApp Desktop" (app installata): si
+legge l'app installata.
+
+### Stato attuale
+- **v2 (mittenti + nomi gruppo/contatti): FUNZIONA** end-to-end, **testato in GUI
+  dall'utente** (16 test verdi). Importa testo + timestamp + **mittente per
+  messaggio** (io / contatto / membro del gruppo), con **nomi dei gruppi** veri e
+  nomi contatti ricchi. Raggruppato per giorno. **Non** importa i media.
+- **v1 (solo testo)** resta il fallback automatico se l'IndexedDB è illeggibile;
+  in GUI è anche un'opzione esplicita (checkbox "Includi mittenti" off = veloce).
+- **Performance (chiave)**: indice IndexedDB e store decifrato **condivisi a livello
+  di processo** (riusati tra finestre): **~78s una sola volta per avvio app**, poi
+  riaprire la finestra e creare MD è **istantaneo**; una nuova chat ~1-2s (scoped).
+  L'indice si carica **solo alla creazione MD** (non all'apertura finestra) → la
+  navigazione resta reattiva. **Cache su disco** (build completo in background al
+  primo uso) → anche tra **riavvii** dell'app l'indice si carica in ~0.3s (resta solo
+  la decifratura ~15s), se il DB non è cambiato. Vedi "Timing" sotto.
+
+### Architettura
+- `whatsapp/desktop_crypto.py` — catena di decifratura → `decrypt_databases()`
+  ritorna `DecryptedStore(workdir, messages_db, contacts_db)` (file SQLite **in
+  chiaro standard**) con `.cleanup()`. Windows-only. Errori → `WhatsAppDesktopError`.
+  `source_fingerprint()` = impronta dei DB sorgente cifrati (per la cache decifratura).
+- `whatsapp/desktop_indexeddb.py` — apre l'**IndexedDB** del WebView2 (lettore
+  vendorizzato) su una **copia** dei file. `get_index()` ritorna un `WhatsAppIndex`
+  **condiviso a livello di processo** (riusato finché i `.ldb` non cambiano; chiuso
+  via `atexit`). `open_index()` è il costruttore: estrae nomi (`group_subjects`,
+  `name_by_jid`, `lid_to_phone`) e prepara i **mittenti scoped** (`_ScopedSenders`:
+  `senders_for_chat(chat_id)` filtra le chiavi `message` per `chatJid` PRIMA della
+  deserializzazione V8 → ~1-2s/chat invece di ~150s per tutto; tiene il wrapper
+  aperto). Fallback full-scan se gli interni ccl mancano. **Cache su disco**: hit →
+  carica la mappa completa da `wa_cache/index.json` senza leggere il LevelDB; miss →
+  scoped + build completo in background (`_spawn_cache_build`) che scrive la cache.
+  Robusto: in errore None (degrado a solo testo).
+- `whatsapp/_vendor/ccl_chromium_reader/` — **`ccl_chromium_reader` vendorizzato**
+  (sottoinsieme IndexedDB) + `ccl_simplesnappy`. MIT. **Non è su PyPI** (solo
+  GitHub) e una dep git-only non è impacchettabile nell'.exe → vendorizzata. Vedi il
+  suo `README.md` per provenienza/patch (incl. `time.sleep(0)` in `_cache_records`
+  per non bloccare la UI). Niente `Brotli` (non serve per IndexedDB).
+- `whatsapp/desktop_reader.py` — `WhatsAppDesktopReader` (context manager:
+  `list_chats`, `read_messages`, `ensure_index(progress)`) + `build_markdown`.
+  `open()` ottiene lo **store decifrato condiviso** (`_get_shared_store`: ri-decifra
+  solo se il sorgente è cambiato) + nomi da `contacts.db`. `ensure_index` usa
+  `get_index` (condiviso). `read_messages` arricchisce ogni messaggio col mittente
+  via `senders_for_chat`. **`close()` NON chiude store/indice** (condivisi a livello
+  app). Risoluzione nomi: IndexedDB → `contacts.db`. Log di timing in INFO (`WA:` / `WA-idx:`).
+- `gui/frames/whatsapp_import_window.py` — `WhatsAppImportWindow(master,
+  on_chat_ready)`: apertura **veloce e reattiva** (decifra + lista chat); l'indice
+  mittenti si carica **solo al "Crea MD"** (se la checkbox "Includi mittenti" è on),
+  con barra di avanzamento non bloccante. Filtro periodo/testo. "Crea MD" → scrive in
+  `app_capture_dir()` → callback aggiunge agli input. Ogni apertura crea una NUOVA
+  finestra/reader, ma store+indice condivisi rendono le riaperture istantanee.
+  Agganciata da `gui/app.py` via `gui/frames/input_frame.py`.
+- `tools/wa_export.py` — CLI `list` / `export` (`--no-senders` = solo testo veloce).
+  `tools/wa_indexeddb_spike.py` — esplora lo schema IndexedDB (usa il vendor).
+  `tools/wa_indexeddb_probe.py` / `wa_desktop_probe.py` — diagnostici read-only.
+  `tools/wa_desktop_decrypt_spike.py` — spike decifratura completo.
+- Dipendenze: `cryptography` (AES; fallback Cryptodome/Crypto). In `setup_cxfreeze.py`
+  sono inclusi `whatsapp`, `cryptography` e i sottopacchetti `whatsapp._vendor.*`.
+- Piano/ricerca: `docs/plans/whatsapp-desktop-import.md`.
+
+### Catena di decifratura (validata sul PC dell'utente)
+`RandomSeed` (registro `HKLM\SYSTEM\CurrentControlSet\Services\TPM\ODUID`,
+leggibile **senza admin**) → `ODUID = SHA256(UTF-16LE("cv1g1gv") || RandomSeed)`
+→ DPAPI-NG: `NCryptProtectSecret(staticBytes, "LOCAL=user")[:32]` = sessionDBSecret
+→ decifra `session.db` → **clientKey** (48B; oracolo: `SHA1(clientKey).hex().upper()`
+== nome cartella `sessions/<...>`) → dbKey (PBKDF2-HMAC-SHA256(clientKey, salt=ODUID,
+10000)=auxKey; IV analogo; `dbKey = AES-256-CBC-PKCS7(staticBytes, auxKey, IV)[:32]`)
+→ decifra `nativeSettings.db` → chiavi tipo1/tipo2 → `genericStorage.db` (messaggi)
+e `contacts.db`. **Cifratura per-pagina**: AES-256-OFB, page=4096B,
+`IV = struct.pack("<I", pageNumber) || page[-12:]`; dopo il decrypt ripristina i
+byte `[16:24]` dall'originale. WAL: header 32B as-is, frame = 24B (pageNumber =
+big-endian primi 4B) + 4096B. `staticBytes = 23a7f19c11e5bd784235c96f85d24913`.
+
+### Mittenti, nomi gruppo e contatti (v2) — come funziona (validato sui dati reali)
+- **`genericStorage.db`** (SQLite decifrato) è la **cache di ricerca full-text**:
+  `message(rowid, id, chatId, timestamp, text)`. Ha il **testo** ma NON il mittente,
+  NON `fromMe`, NON i media. `id` è un docid (`999999231`…).
+- **L'IndexedDB del WebView2** (Chromium LevelDB + serializzazione V8, ≈323 MB:
+  `...\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb` + `.blob`) ha il resto.
+  DB rilevante: **`model-storage`** (103 object store). Store usati:
+  - **`message`** → `rowId`, `id` (prefisso `true_`/`false_` = **fromMe**),
+    `author` (`{server,user,_serialized}` = **mittente nei gruppi**, un `@lid`), `t`.
+    Il **corpo è cifrato** in `msgRowOpaqueData` (`{_data,iv,_keyId,_scheme}`,
+    chiave in `wawc_db_enc`) → **non** lo leggiamo: il testo arriva da genericStorage.
+  - **`group-metadata`** → `subject` = **nome del gruppo**.
+  - **`contact`** → `id`(@lid) → `name`/`shortName`/`pushname` + `phoneNumber`(@c.us).
+  - **`out-contact`** → `id`(@s.whatsapp.net) → `fullName`.
+- **JOIN esatto e validato**: `genericStorage.message.id == IndexedDB.message.rowId`
+  (264.947/264.947 = **100%**, timestamp coerente 100%). Niente join fragile per
+  timestamp. Quindi: **testo+chat+ts da genericStorage** ⨝ **fromMe+author da
+  IndexedDB** per `rowId`. Mittente: DM → io/contatto da `fromMe`; gruppi → `author`
+  (@lid) risolto a nome via `contact` (e `lid→phoneNumber→nome`); fallback numero.
+- **Lettore**: `ccl_chromium_reader` **vendorizzato** (vedi sopra). Si legge una
+  **COPIA** dei file (DB live bloccato). Formato `chatId` coerente tra le due
+  sorgenti (DM 381/381, gruppi 108/108) → la risoluzione funziona per entrambi.
+- **Timing reale** (PC utente, ~265k messaggi), misurato in GUI: decifratura ~15s;
+  apertura wrapper IndexedDB ~60s (legge ~2,2M record raw, `.ldb` 323 MB); nomi ~1.6s;
+  **scoped per-chat ~1-2s**. **1ª volta per avvio app ~78s**; poi store+indice
+  **condivisi in memoria** → riaperture finestra e nuove creazioni MD **istantanee**.
+- **Cache su disco** (`%APPDATA%\OCRLangExtract\wa_cache\index.json`, ~7 MB, keyed
+  sul fingerprint dei `.ldb`): al primo uso, dopo lo scoped, un thread daemon
+  costruisce la mappa mittenti COMPLETA (riusa il wrapper già aperto: +~150s, in
+  background, non blocca) e la salva. Ai **riavvii** successivi dell'app, se i `.ldb`
+  non sono cambiati, l'indice si carica da disco in **~0.3s SENZA rileggere il
+  LevelDB** → l'unico costo resta la decifratura (~15s). `_load_senders`/scoped/cache
+  producono `Sender` **canonici e identici** (author solo per messaggi altrui).
+- **Invalidazione**: store ri-decifrato se cambia `source_fingerprint` (sorgenti
+  cifrati + `-wal`); indice/cache ricostruiti se cambiano i `.ldb` (flush/compaction
+  — non a ogni scrittura, che va nel `.log`). I messaggi più recenti ancora nel
+  `.log` possono mancare di mittente finché non compattati (degradano a solo testo).
+- **Media**: differiti (best-effort); i riferimenti ci sono (`directPath`/`mediaKey`).
+
 ## Convenzioni e gotcha
 - **UI e commenti in italiano.**
 - **Modalità output** (`config.output_mode`): `accanto` (di fianco al sorgente,

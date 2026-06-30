@@ -46,6 +46,7 @@ build_exe_options = {
         "tkinterdnd2",
         "elevenlabs",
         "Cryptodome",       # usato da py7zr per gli archivi .7z
+        "cryptography",     # decifratura WhatsApp Desktop (AES) + transitive
         "openpyxl",         # lettura fogli di calcolo .xlsx/.xlsm
         "google.protobuf",  # transitiva di google-genai / langextract
         "sqlite3",
@@ -57,6 +58,13 @@ build_exe_options = {
         "pipeline",
         "output",
         "utils",
+        "whatsapp",
+        # Lettore IndexedDB vendorizzato (import differito + relativi: lo
+        # elenchiamo esplicitamente così cx_Freeze lo impacchetta sicuramente).
+        "whatsapp._vendor",
+        "whatsapp._vendor.ccl_chromium_reader",
+        "whatsapp._vendor.ccl_chromium_reader.serialization_formats",
+        "whatsapp._vendor.ccl_chromium_reader.storage_formats",
     ],
     # Include esplicito per import dinamico usato da opentelemetry context loader.
     "includes": [

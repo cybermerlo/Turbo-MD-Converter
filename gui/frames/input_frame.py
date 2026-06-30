@@ -308,12 +308,13 @@ class InputFrame(ctk.CTkFrame):
     """Sidebar: dropzone + actions + scrollable file list + footer counts."""
 
     def __init__(self, master, on_files_changed=None, on_selection_changed=None,
-                 on_open_requested=None, **kwargs):
+                 on_open_requested=None, on_import_whatsapp=None, **kwargs):
         super().__init__(master, fg_color=theme.PAPER, corner_radius=0,
                          border_width=0, **kwargs)
         self.on_files_changed = on_files_changed
         self.on_selection_changed = on_selection_changed
         self.on_open_requested = on_open_requested
+        self.on_import_whatsapp = on_import_whatsapp
 
         self._file_paths: list[Path] = []
         self._rows: dict[Path, _FileRow] = {}
@@ -366,6 +367,15 @@ class InputFrame(ctk.CTkFrame):
         )
         self.paste_text_btn.pack(side="left", fill="x", expand=True)
 
+        # ── Importa da WhatsApp Desktop ───────────────────────────────────
+        wa_row = ctk.CTkFrame(self, fg_color="transparent")
+        wa_row.grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.wa_import_btn = theme.ghost_button(
+            wa_row, "Importa da WhatsApp", command=self._import_whatsapp,
+            height=30,
+        )
+        self.wa_import_btn.pack(fill="x", expand=True)
+
         # ── File list (scrollable) ────────────────────────────────────────
         list_wrap = ctk.CTkFrame(self, fg_color=theme.PAPER, corner_radius=0)
         list_wrap.grid(row=3, column=0, sticky="nsew", padx=8, pady=0)
@@ -411,6 +421,10 @@ class InputFrame(ctk.CTkFrame):
         self.clear_btn.pack(side="right")
 
     # ─── Selection helpers ────────────────────────────────────────────────
+    def _import_whatsapp(self):
+        if callable(self.on_import_whatsapp):
+            self.on_import_whatsapp()
+
     def _select_files(self):
         paths = filedialog.askopenfilenames(
             title="Seleziona documenti",
@@ -572,7 +586,7 @@ class InputFrame(ctk.CTkFrame):
     def set_enabled(self, enabled: bool):
         state = "normal" if enabled else "disabled"
         for b in (self.add_files_btn, self.add_folder_btn,
-                  self.paste_text_btn, self.clear_btn):
+                  self.paste_text_btn, self.wa_import_btn, self.clear_btn):
             b.configure(state=state)
 
     def set_md_for_file(self, input_path: Path, md_path: Path):

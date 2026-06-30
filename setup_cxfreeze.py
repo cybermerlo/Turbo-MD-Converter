@@ -37,8 +37,6 @@ build_exe_options = {
         "langextract",
         "google",
         "google.genai",
-        "opentelemetry",
-        "opentelemetry.context",
         "fitz",          # PyMuPDF
         "PIL",
         "PIL._tkinter_finder",
@@ -65,10 +63,6 @@ build_exe_options = {
         "whatsapp._vendor.ccl_chromium_reader",
         "whatsapp._vendor.ccl_chromium_reader.serialization_formats",
         "whatsapp._vendor.ccl_chromium_reader.storage_formats",
-    ],
-    # Include esplicito per import dinamico usato da opentelemetry context loader.
-    "includes": [
-        "opentelemetry.context.contextvars_context",
     ],
     "include_files": [
         # Icone / loghi

@@ -74,17 +74,45 @@ def _process_attachment_list(
     return attachment_docs
 
 
-def extract_eml_parts(
+# PEC (Posta Elettronica Certificata): la busta di trasporto certificata avvolge il
+# messaggio VERO in un allegato message/rfc822 chiamato `postacert.eml`, accanto ai
+# metadati `daticert.xml` e alla firma `smime.p7s`. Il messaggio reale (mittente,
+# oggetto, allegati) sta in postacert.eml: e' quello che va estratto.
+_PEC_INNER_NAME = "postacert.eml"
+_PEC_NOISE_NAMES = {"daticert.xml", "smime.p7s"}
+
+
+def _find_pec_inner(msg):
+    """Se `msg` e' una PEC, ritorna il messaggio ORIGINALE nidificato (l'allegato
+    `postacert.eml`), altrimenti None. Riconosciuto per nome file, quindi non tocca
+    le email normali che inoltrano un altro messaggio (message/rfc822) come allegato."""
+    for part in msg.walk():
+        if (part.get_filename() or "").lower() != _PEC_INNER_NAME:
+            continue
+        inner = None
+        try:
+            inner = part.get_content()
+        except Exception:
+            inner = None
+        if not hasattr(inner, "walk"):
+            payload = part.get_payload()
+            inner = payload[0] if isinstance(payload, list) and payload else None
+        if hasattr(inner, "walk"):
+            return inner
+    return None
+
+
+def _message_to_parts(
+    msg,
     file_path: Path,
     process_attachment: Callable[[Path], str],
     emit_log: Callable[[str, str], None],
     cancel_event=None,
 ) -> tuple[str, list[EmailAttachmentDocument]]:
-    msg = email.message_from_bytes(
-        file_path.read_bytes(),
-        policy=email.policy.default,
-    )
-
+    """Estrae `(testo, allegati)` da un `email.message.Message`: header + corpo
+    (plain/html) + allegati espliciti. Condiviso tra l'.eml top-level e il
+    `postacert.eml` nidificato di una PEC. Scarta i metadati/firma della busta PEC
+    (`daticert.xml`, `smime.p7s`), che non sono documenti."""
     parts: list[str] = []
     for header in ("date", "from", "to", "cc", "subject"):
         value = msg.get(header, "").strip()
@@ -123,6 +151,8 @@ def extract_eml_parts(
             continue
         disposition = part.get_content_disposition()
         filename = part.get_filename()
+        if (filename or "").lower() in _PEC_NOISE_NAMES:
+            continue  # metadati/firma della busta PEC, non un documento
         is_explicit_attachment = disposition in {"attachment", "inline"} and bool(filename)
         if is_explicit_attachment:
             raw_name = filename or f"allegato_{len(att_list) + 1}"
@@ -134,6 +164,30 @@ def extract_eml_parts(
         file_path, att_list, process_attachment, emit_log, cancel_event,
     )
     return "\n".join(parts), attachment_docs
+
+
+def extract_eml_parts(
+    file_path: Path,
+    process_attachment: Callable[[Path], str],
+    emit_log: Callable[[str, str], None],
+    cancel_event=None,
+) -> tuple[str, list[EmailAttachmentDocument]]:
+    msg = email.message_from_bytes(
+        file_path.read_bytes(),
+        policy=email.policy.default,
+    )
+    inner = _find_pec_inner(msg)
+    if inner is not None:
+        emit_log(
+            f"PEC rilevata in {file_path.name}: estraggo il messaggio originale "
+            "(postacert.eml), scarto la busta di trasporto.", "INFO",
+        )
+        body, atts = _message_to_parts(
+            inner, file_path, process_attachment, emit_log, cancel_event)
+        note = "PEC - messaggio originale (busta di trasporto certificata rimossa)"
+        return (f"{note}\n\n{body}" if body else note), atts
+    return _message_to_parts(
+        msg, file_path, process_attachment, emit_log, cancel_event)
 
 
 def extract_msg_parts(

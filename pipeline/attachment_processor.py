@@ -1,5 +1,6 @@
 """Format router: convert a file path to plain text (OCR or direct read)."""
 
+import re
 import tempfile
 import threading
 from collections.abc import Callable
@@ -33,6 +34,17 @@ from pipeline.text_extractors import (
     extract_xlsx_text,
     extract_xml_text,
 )
+
+_EMAIL_HEADER_RE = re.compile(
+    rb"(?i)(Received|Return-Path|From|To|Subject|Date|MIME-Version|Message-ID"
+    rb"|Delivered-To)\s*:")
+
+
+def _looks_like_email(data: bytes) -> bool:
+    """True se i primi byte sembrano l'inizio di un messaggio email (RFC 822): serve
+    a riconoscere un `.eml` sbustato da un `.p7m` il cui nome non riporta gia' `.eml`
+    (tipico delle PEC firmate salvate come singolo `documento.p7m`)."""
+    return bool(_EMAIL_HEADER_RE.match(data[:512].lstrip()))
 
 
 class AttachmentProcessor:
@@ -288,6 +300,11 @@ class AttachmentProcessor:
                 inner_suffix = ".zip"
             elif inner_bytes[:5] == b"<?xml":
                 inner_suffix = ".xml"
+            elif _looks_like_email(inner_bytes):
+                # Busta firmata (spesso una PEC) che racchiude un messaggio: trattalo
+                # come .eml -> il router lo manda a extract_eml_parts, che sbusta anche
+                # l'eventuale postacert.eml. Senza questo, cadeva in .bin ed era perso.
+                inner_suffix = ".eml"
             else:
                 inner_suffix = ".bin"
             inner_name = file_path.stem + inner_suffix

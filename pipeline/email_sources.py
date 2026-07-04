@@ -82,10 +82,25 @@ _PEC_INNER_NAME = "postacert.eml"
 _PEC_NOISE_NAMES = {"daticert.xml", "smime.p7s"}
 
 
+def _is_pec_envelope(msg) -> bool:
+    """True solo se `msg` e' una BUSTA DI TRASPORTO PEC genuina (non una normale
+    email che INOLTRA una PEC come allegato). Le buste PEC portano gli header
+    `X-Riferimento-Message-ID`/`X-Ricevuta`, provengono dal gestore
+    (`posta-certificata@...`) e hanno oggetto che inizia con "POSTA CERTIFICATA:".
+    Cosi' un avvocato che inoltra una PEC (con una sua nota e altri allegati) non
+    perde nulla: quel messaggio viene processato normalmente, non sbustato."""
+    if msg.get("X-Riferimento-Message-ID") or msg.get("X-Ricevuta"):
+        return True
+    if "posta-certificata@" in (msg.get("from", "") or "").lower():
+        return True
+    return (msg.get("subject", "") or "").upper().startswith("POSTA CERTIFICATA:")
+
+
 def _find_pec_inner(msg):
-    """Se `msg` e' una PEC, ritorna il messaggio ORIGINALE nidificato (l'allegato
-    `postacert.eml`), altrimenti None. Riconosciuto per nome file, quindi non tocca
-    le email normali che inoltrano un altro messaggio (message/rfc822) come allegato."""
+    """Ritorna il messaggio ORIGINALE nidificato di una PEC (l'allegato
+    `postacert.eml`), o None se assente. Va chiamato solo dopo `_is_pec_envelope`:
+    la ricerca e' per nome file, che da solo non distingue una busta di trasporto da
+    un inoltro."""
     for part in msg.walk():
         if (part.get_filename() or "").lower() != _PEC_INNER_NAME:
             continue
@@ -176,7 +191,9 @@ def extract_eml_parts(
         file_path.read_bytes(),
         policy=email.policy.default,
     )
-    inner = _find_pec_inner(msg)
+    # Sbusta il postacert.eml SOLO se questa e' davvero una busta di trasporto PEC
+    # (non una email che inoltra una PEC come allegato: quella si processa normale).
+    inner = _find_pec_inner(msg) if _is_pec_envelope(msg) else None
     if inner is not None:
         emit_log(
             f"PEC rilevata in {file_path.name}: estraggo il messaggio originale "

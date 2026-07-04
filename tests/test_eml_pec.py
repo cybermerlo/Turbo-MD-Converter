@@ -5,7 +5,7 @@ import unittest
 from email.message import EmailMessage
 from pathlib import Path
 
-from pipeline.email_sources import _find_pec_inner, extract_eml_parts
+from pipeline.email_sources import _is_pec_envelope, extract_eml_parts
 
 
 def _build_pec() -> bytes:
@@ -57,18 +57,29 @@ class PecUnwrapTests(unittest.TestCase):
             self.assertEqual(["citazione.pdf"], processed)
             self.assertEqual(["citazione.pdf"], [a.filename for a in attachments])
 
-    def test_email_normale_non_e_pec(self):
-        """Un'email che inoltra un altro messaggio (message/rfc822 NON chiamato
-        postacert.eml) non deve essere trattata come PEC."""
-        fwd_inner = EmailMessage()
-        fwd_inner["Subject"] = "Inoltrato"
-        fwd_inner.set_content("ciao")
+    def test_pec_inoltrata_non_viene_sbustata(self):
+        """Un avvocato che INOLTRA una PEC (nota propria + postacert.eml allegato) non
+        deve perdere la nota: senza i marcatori della busta di trasporto (mittente
+        posta-certificata@, oggetto 'POSTA CERTIFICATA:', header X-Ricevuta) NON si
+        sbusta -> il messaggio viene processato normalmente."""
+        inner = EmailMessage()
+        inner["From"] = "avvocato@pec.it"
+        inner["Subject"] = "ATTO"
+        inner.set_content("atto vero")
         fwd = EmailMessage()
-        fwd["Subject"] = "Fwd"
-        fwd.set_content("Ti inoltro.")
-        fwd.add_attachment(fwd_inner, filename="messaggio.eml")
-        msg = email.message_from_bytes(fwd.as_bytes(), policy=email.policy.default)
-        self.assertIsNone(_find_pec_inner(msg))
+        fwd["From"] = "collega@studio.it"        # NON posta-certificata@
+        fwd["Subject"] = "Ti giro questa PEC"    # NON 'POSTA CERTIFICATA:'
+        fwd.set_content("Guarda il punto 3, urgente. -- Mario")
+        fwd.add_attachment(inner, filename="postacert.eml")
+
+        self.assertFalse(_is_pec_envelope(
+            email.message_from_bytes(fwd.as_bytes(), policy=email.policy.default)))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            f = Path(tmpdir) / "fwd.eml"
+            f.write_bytes(fwd.as_bytes())
+            body, _atts = extract_eml_parts(f, lambda p: "", lambda *a, **k: None)
+        self.assertIn("Guarda il punto 3", body)        # nota dell'inoltro conservata
+        self.assertNotIn("busta di trasporto", body)    # NON sbustata
 
 
 if __name__ == "__main__":

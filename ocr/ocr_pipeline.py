@@ -58,18 +58,48 @@ def _norm_line(s: str) -> str:
     return " ".join(s.split()).lower()
 
 
+_JOIN_WINDOW = 12   # righe entro cui cercare i duplicati/frammenti alla giuntura
+_JOIN_MINLEN = 6    # righe piu' corte di cosi' non vengono mai scartate (troppo rischioso)
+
+
 def _join_bands(parts: list[str]) -> str:
-    """Concatena il testo delle strisce eliminando le righe duplicate alla giuntura
-    (le strisce si sovrappongono, quindi qualche riga compare in due strisce)."""
-    out: list[str] = []
+    """Concatena il testo delle strisce eliminando i frammenti alle giunture. Le
+    strisce si sovrappongono (per non tagliare le righe) e una striscia bloccata da
+    RECITATION finisce a meta' riga: si producono cosi' righe DUPLICATE (dalla
+    sovrapposizione ri-letta) e MOZZICONI (dai tagli a meta'). Regola conservativa:
+    si scarta una riga solo se e' un DUPLICATO esatto di una vicina gia' tenuta, o se
+    e' CONTENUTA in una riga piu' completa lì vicino (quindi e' un frammento di quella).
+    Le righe corte non si toccano, per non perdere mai contenuto vero."""
+    lines: list[str] = []
     for part in parts:
-        lines = part.split("\n")
-        tail = {_norm_line(x) for x in out[-10:] if x.strip()}
-        i = 0
-        while i < len(lines) and _norm_line(lines[i]) and _norm_line(lines[i]) in tail:
-            i += 1  # salta le righe iniziali che ripetono la coda gia' emessa
-        out.extend(lines[i:])
-    return "\n".join(out).strip()
+        lines.extend(part.split("\n"))
+    norm = [_norm_line(x) for x in lines]
+    n = len(lines)
+    keep = [True] * n
+    for i in range(n):
+        ni = norm[i]
+        if not ni or len(ni) < _JOIN_MINLEN:
+            continue
+        lo, hi = max(0, i - _JOIN_WINDOW), min(n, i + _JOIN_WINDOW + 1)
+        for j in range(lo, hi):
+            if j == i or not keep[j]:
+                continue
+            nj = norm[j]
+            if nj == ni:
+                if j < i:            # duplicato esatto: tieni la prima occorrenza
+                    keep[i] = False
+                    break
+            elif len(nj) > len(ni) and ni in nj:  # frammento di una riga piu' completa vicina
+                keep[i] = False
+                break
+    out = [lines[i] for i in range(n) if keep[i]]
+    # collassa le righe vuote consecutive rimaste dopo lo scarto
+    res: list[str] = []
+    for line in out:
+        if not line.strip() and res and not res[-1].strip():
+            continue
+        res.append(line)
+    return "\n".join(res).strip()
 
 
 @dataclass

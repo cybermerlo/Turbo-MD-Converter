@@ -10,7 +10,7 @@ import unittest
 
 from PIL import Image
 
-from ocr.ocr_pipeline import OCRPipeline
+from ocr.ocr_pipeline import OCRPipeline, _join_bands
 
 
 def _jpeg(height: int, width: int = 600) -> bytes:
@@ -72,6 +72,29 @@ class RecitationFallbackTests(unittest.TestCase):
         res = _pipe(ok)._process_single_page(0, _jpeg(2000))
         self.assertEqual(res.text, "pagina intera ok")
         self.assertEqual(ok.calls, 1)  # nessuna suddivisione se non e' troncata
+
+
+class JoinBandsTests(unittest.TestCase):
+    def test_scarta_frammenti_e_duplicati_ma_tiene_il_contenuto(self):
+        bands = [
+            "Testo introduttivo abbastanza lungo.\nArt. 1 Ogg",  # "Art. 1 Ogg" = taglio a meta'
+            "Art. 1 Oggetto dell'assicurazione completo.\nClausola comune ripetuta qui.",
+            "Clausola comune ripetuta qui.\nConclusione del documento.",  # duplicato esatto
+        ]
+        out = _join_bands(bands)
+        # il frammento (contenuto nella riga piu' completa vicina) sparisce
+        self.assertIn("Art. 1 Oggetto dell'assicurazione completo.", out)
+        self.assertNotIn("Art. 1 Ogg\n", out + "\n")
+        # il duplicato esatto compare una sola volta
+        self.assertEqual(out.count("Clausola comune ripetuta qui."), 1)
+        # il contenuto vero (inizio e fine) e' preservato
+        self.assertIn("Testo introduttivo abbastanza lungo.", out)
+        self.assertIn("Conclusione del documento.", out)
+
+    def test_non_scarta_righe_corte(self):
+        # righe corte (< soglia) non vanno mai perse anche se contenute altrove
+        out = _join_bands(["Art. 4\nEffetto e durata dell'assicurazione: Art. 4 e seguenti."])
+        self.assertIn("Art. 4", out)
 
 
 if __name__ == "__main__":

@@ -95,6 +95,7 @@ class GeminiOCR:
             text_chunks = []
             input_tokens = 0
             output_tokens = 0
+            finish_reason = None
 
             for chunk in stream_response:
                 # `chunk.text` è una property del SDK google-genai che può sollevare
@@ -105,15 +106,21 @@ class GeminiOCR:
                 if chunk_text:
                     text_chunks.append(chunk_text)
 
-                if not chunk_text and getattr(chunk, "candidates", None):
-                    candidate = chunk.candidates[0]
-                    finish_reason = getattr(candidate, "finish_reason", "UNKNOWN")
-                    # Log only if it stops unexpectedly
-                    if finish_reason and str(finish_reason) not in ("UNKNOWN", "STOP", "FinishReason.STOP"):
+                candidates = getattr(chunk, "candidates", None)
+                if candidates:
+                    fr = getattr(candidates[0], "finish_reason", None)
+                    if fr is not None:
+                        # Normalizza "FinishReason.RECITATION" -> "RECITATION". Tenuto
+                        # SEMPRE (non solo sui chunk vuoti): una pagina puo' avere del
+                        # testo E poi essere TAGLIATA da RECITATION/MAX_TOKENS sull'ultimo
+                        # chunk — se guardassimo solo i chunk vuoti, il taglio passerebbe
+                        # in silenzio. Il chiamante lo usa per il fallback a strisce.
+                        finish_reason = str(fr).rsplit(".", 1)[-1]
+                    if not chunk_text and finish_reason and finish_reason not in ("UNKNOWN", "STOP"):
                         logger.warning(
                             "Attenzione: Chunk della pagina %d ha restituito testo vuoto. Finish reason: %s. "
-                            "Safety ratings: %s", 
-                            page_num + 1, finish_reason, getattr(candidate, "safety_ratings", "N/A")
+                            "Safety ratings: %s",
+                            page_num + 1, finish_reason, getattr(candidates[0], "safety_ratings", "N/A")
                         )
 
                 if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
@@ -121,15 +128,18 @@ class GeminiOCR:
                     output_tokens = getattr(chunk.usage_metadata, "candidates_token_count", output_tokens) or output_tokens
 
             text = "".join(text_chunks)
+            finish_reason = finish_reason or "STOP"
 
             logger.info(
-                "Pagina %d OCR completata: %d caratteri, %d+%d tokens",
+                "Pagina %d OCR completata: %d caratteri, %d+%d tokens%s",
                 page_num + 1, len(text), input_tokens, output_tokens,
+                "" if finish_reason == "STOP" else f" [finish={finish_reason}]",
             )
             return {
                 "text": text,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "finish_reason": finish_reason,
             }
 
         except Exception as e:

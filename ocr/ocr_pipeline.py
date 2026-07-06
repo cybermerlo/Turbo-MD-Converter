@@ -4,8 +4,11 @@ import contextlib
 import logging
 import threading
 from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
 from typing import Callable
+
+from PIL import Image
 
 from config.defaults import PAGE_SEPARATOR
 from config.settings import AppConfig
@@ -28,6 +31,45 @@ from utils.cost_tracker import CostTracker
 from utils.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
+
+# Finish reason che indicano una trascrizione TRONCATA (non un normale STOP). Il caso
+# tipico su documenti legali e' RECITATION: Gemini interrompe l'output quando riconosce
+# testo "recitato" (leggi, decreti, polizze standard pubblicate in G.U.), tagliando la
+# pagina a meta'. Su questi casi facciamo il fallback a strisce.
+_TRUNCATED_REASONS = frozenset({
+    "RECITATION", "MAX_TOKENS", "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "OTHER",
+})
+_BAND_MAX_DEPTH = 3       # profondita' max della suddivisione (fino a ~8 strisce dove serve)
+_BAND_OVERLAP = 0.06      # sovrapposizione tra strisce (frazione dell'altezza) per non tagliare righe
+
+
+def _is_truncated(finish_reason) -> bool:
+    return bool(finish_reason) and str(finish_reason).upper() in _TRUNCATED_REASONS
+
+
+def _to_jpeg(img, quality: int = 85) -> bytes:
+    from io import BytesIO
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def _norm_line(s: str) -> str:
+    return " ".join(s.split()).lower()
+
+
+def _join_bands(parts: list[str]) -> str:
+    """Concatena il testo delle strisce eliminando le righe duplicate alla giuntura
+    (le strisce si sovrappongono, quindi qualche riga compare in due strisce)."""
+    out: list[str] = []
+    for part in parts:
+        lines = part.split("\n")
+        tail = {_norm_line(x) for x in out[-10:] if x.strip()}
+        i = 0
+        while i < len(lines) and _norm_line(lines[i]) and _norm_line(lines[i]) in tail:
+            i += 1  # salta le righe iniziali che ripetono la coda gia' emessa
+        out.extend(lines[i:])
+    return "\n".join(out).strip()
 
 
 @dataclass
@@ -244,55 +286,103 @@ class OCRPipeline:
 
         return result
 
+    def _ocr_call(self, image_bytes: bytes, page_num: int,
+                  mime_type: str = "image/jpeg") -> dict:
+        """Una chiamata OCR con retry sui SOLI errori transitori (i 4xx permanenti
+        falliscono subito). Ritorna il dict di `GeminiOCR.ocr_page`
+        (text, input_tokens, output_tokens, finish_reason)."""
+        max_retries = 3
+
+        def on_retry(attempt: int, exc: Exception):
+            logger.warning("Retry %d/%d per pagina %d: %s",
+                           attempt, max_retries, page_num + 1, exc)
+
+        return retry_with_backoff(
+            func=lambda: self.ocr.ocr_page(image_bytes, page_num, mime_type=mime_type),
+            max_retries=max_retries,
+            base_delay=2.0,
+            retryable_exceptions=(GeminiOCRRetryableError,),
+            on_retry=on_retry,
+        )
+
     def _process_single_page(
         self, page_num: int, image_bytes: bytes,
         mime_type: str = "image/jpeg",
     ) -> OCRPageResult:
-        """Process a single page with retry logic."""
-
-        def do_ocr():
-            return self.ocr.ocr_page(image_bytes, page_num, mime_type=mime_type)
-
-        max_retries = 3
-
-        def on_retry(attempt: int, exc: Exception):
-            logger.warning(
-                "Retry %d/%d per pagina %d: %s",
-                attempt, max_retries, page_num + 1, exc,
-            )
-
+        """OCR di una pagina. Se la trascrizione della pagina INTERA viene troncata
+        (tipicamente RECITATION su testi standard/pubblicati), ritenta a strisce
+        orizzontali per recuperare il testo tagliato."""
         try:
-            # Solo gli errori transitori (GeminiOCRRetryableError) vengono ritentati;
-            # i 4xx permanenti (GeminiOCRError) falliscono subito senza backoff.
-            ocr_result = retry_with_backoff(
-                func=do_ocr,
-                max_retries=max_retries,
-                base_delay=2.0,
-                retryable_exceptions=(GeminiOCRRetryableError,),
-                on_retry=on_retry,
-            )
+            res = self._ocr_call(image_bytes, page_num, mime_type)
+            text = res["text"]
+            in_tok = res["input_tokens"]
+            out_tok = res["output_tokens"]
 
-            # Track costs
+            if _is_truncated(res.get("finish_reason")):
+                logger.warning(
+                    "Pagina %d troncata dall'OCR (%s): ri-provo a strisce per "
+                    "recuperare il testo mancante.", page_num + 1, res.get("finish_reason"),
+                )
+                banded = self._ocr_banded(image_bytes, page_num, mime_type)
+                in_tok += banded["input_tokens"]
+                out_tok += banded["output_tokens"]
+                if len(banded["text"]) > len(text):
+                    logger.info("Pagina %d: recupero a strisce %d -> %d caratteri.",
+                                page_num + 1, len(text), len(banded["text"]))
+                    text = banded["text"]
+
             if self.cost_tracker:
                 self.cost_tracker.add_call(
-                    model_id=self.model_id,
-                    input_tokens=ocr_result["input_tokens"],
-                    output_tokens=ocr_result["output_tokens"],
-                    phase="ocr",
+                    model_id=self.model_id, input_tokens=in_tok,
+                    output_tokens=out_tok, phase="ocr",
                 )
-
             return OCRPageResult(
-                page_num=page_num,
-                text=ocr_result["text"],
-                success=True,
-                input_tokens=ocr_result["input_tokens"],
-                output_tokens=ocr_result["output_tokens"],
+                page_num=page_num, text=text, success=True,
+                input_tokens=in_tok, output_tokens=out_tok,
             )
 
         except GeminiOCRError as e:
-            return OCRPageResult(
-                page_num=page_num,
-                text="",
-                success=False,
-                error=str(e),
-            )
+            return OCRPageResult(page_num=page_num, text="", success=False, error=str(e))
+
+    def _ocr_banded(self, image_bytes: bytes, page_num: int,
+                    mime_type: str = "image/jpeg") -> dict:
+        """Ri-OCR di una pagina troncata dividendola in strisce orizzontali sovrapposte
+        (ricorsivo: una striscia ancora troncata viene divisa di nuovo, fino a
+        `_BAND_MAX_DEPTH`). Le trascrizioni piu' corte aggirano il blocco RECITATION.
+        Ritorna {text, input_tokens, output_tokens}; text vuoto se non si puo' dividere."""
+        try:
+            base = Image.open(BytesIO(image_bytes))
+            base.load()
+        except Exception as e:  # noqa: BLE001 — immagine illeggibile: niente fallback
+            logger.warning("Fallback a strisce non possibile (pagina %d): %s",
+                           page_num + 1, e)
+            return {"text": "", "input_tokens": 0, "output_tokens": 0}
+
+        texts: list[str] = []
+        tok = {"in": 0, "out": 0}
+
+        def ocr_region(img: "Image.Image", depth: int) -> None:
+            try:
+                r = self._ocr_call(_to_jpeg(img), page_num, "image/jpeg")
+            except GeminiOCRError:
+                return
+            tok["in"] += r["input_tokens"]
+            tok["out"] += r["output_tokens"]
+            if not _is_truncated(r.get("finish_reason")) or depth >= _BAND_MAX_DEPTH:
+                if r["text"].strip():
+                    texts.append(r["text"].strip())
+                return
+            # striscia ancora troncata: dividila in due (con sovrapposizione)
+            h, w = img.height, img.width
+            ov = int(h * _BAND_OVERLAP)
+            mid = h // 2
+            ocr_region(img.crop((0, 0, w, min(h, mid + ov))), depth + 1)
+            ocr_region(img.crop((0, max(0, mid - ov), w, h)), depth + 1)
+
+        # la pagina intera e' gia' nota come troncata: parti subito dividendo in due
+        h, w = base.height, base.width
+        ov = int(h * _BAND_OVERLAP)
+        mid = h // 2
+        ocr_region(base.crop((0, 0, w, min(h, mid + ov))), 1)
+        ocr_region(base.crop((0, max(0, mid - ov), w, h)), 1)
+        return {"text": _join_bands(texts), "input_tokens": tok["in"], "output_tokens": tok["out"]}

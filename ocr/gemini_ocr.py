@@ -44,7 +44,7 @@ def _is_non_retryable(exc: Exception) -> bool:
 class GeminiOCR:
     """Sends page images to Gemini for text extraction."""
 
-    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview",
+    def __init__(self, api_key: str, model_id: str = "gemini-3.5-flash-lite",
                  ocr_prompt: str = DEFAULT_OCR_PROMPT):
         self.client = genai.Client(api_key=api_key)
         self.model_id = model_id
@@ -79,7 +79,14 @@ class GeminiOCR:
                     "HARM_CATEGORY_DANGEROUS_CONTENT",
                 ]
             ]
-            config = types.GenerateContentConfig(safety_settings=safety_settings)
+            # L'OCR e' trascrizione pura: nessun reasoning necessario. Disattiviamo
+            # il "thinking" (budget 0) perche' sui modelli 3.x i thinking token sono
+            # fatturati come output — attivarli su una pagina di testo gonfierebbe il
+            # costo senza migliorare la trascrizione.
+            config = types.GenerateContentConfig(
+                safety_settings=safety_settings,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
 
             full_prompt = self.ocr_prompt + IMAGE_HANDLING_INSTRUCTION
 

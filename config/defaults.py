@@ -74,11 +74,17 @@ Testo OCR:
 """
 
 # Available OCR models (default first)
-DEFAULT_OCR_MODEL = "gemini-3.1-flash-lite"
+# - gemini-3.5-flash-lite: default. ~2x piu' veloce del 3.1-lite e qualita' piu'
+#   alta (contesto lungo, meno errori su numeri/date); ideale per l'OCR batch.
+# - gemini-3.6-flash: tier "documenti difficili" (piu' reasoning, piu' caro).
+# - gemini-3.1-flash-lite: opzione economy (il piu' economico, GA fino a mag 2027).
+# - gemini-2.5-flash: opzione legacy (generazione precedente).
+DEFAULT_OCR_MODEL = "gemini-3.5-flash-lite"
 
 AVAILABLE_OCR_MODELS = [
     DEFAULT_OCR_MODEL,
-    "gemini-3-flash-preview",
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
     "gemini-2.5-flash",
 ]
 
@@ -134,9 +140,13 @@ PAGE_SEPARATOR = "\n\n--- Pagina {page_num} ---\n\n"
 # Pricing per modello. I modelli Gemini sono tariffati per token (input/output
 # per 1M); la trascrizione ElevenLabs Scribe è tariffata per ora di audio.
 PRICING = {
-    "gemini-3-flash-preview": {
-        "input_per_1m": 0.50,
-        "output_per_1m": 3.00,
+    "gemini-3.6-flash": {
+        "input_per_1m": 1.50,
+        "output_per_1m": 7.50,
+    },
+    "gemini-3.5-flash-lite": {
+        "input_per_1m": 0.30,
+        "output_per_1m": 2.50,
     },
     "gemini-3.1-flash-lite": {
         "input_per_1m": 0.25,

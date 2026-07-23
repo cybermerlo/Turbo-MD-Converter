@@ -79,14 +79,14 @@ class GeminiOCR:
                     "HARM_CATEGORY_DANGEROUS_CONTENT",
                 ]
             ]
-            # L'OCR e' trascrizione pura: nessun reasoning necessario. Disattiviamo
-            # il "thinking" (budget 0) perche' sui modelli 3.x i thinking token sono
-            # fatturati come output — attivarli su una pagina di testo gonfierebbe il
-            # costo senza migliorare la trascrizione.
-            config = types.GenerateContentConfig(
-                safety_settings=safety_settings,
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
-            )
+            # NB: NON impostare qui thinking_config. Il parametro del "thinking"
+            # differisce per famiglia — Gemini 2.5 usa thinking_budget (numerico),
+            # Gemini 3.x usa thinking_level (minimal/low/medium/high) — e passare
+            # thinking_budget=0 a un modello 3.x come gemini-3.5-flash-lite fa
+            # FALLIRE ogni pagina (400). Non serve comunque forzarlo: i modelli
+            # *-flash-lite hanno thinking_level="minimal" di default, gia' ottimale
+            # per l'OCR (trascrizione pura, senza reasoning).
+            config = types.GenerateContentConfig(safety_settings=safety_settings)
 
             full_prompt = self.ocr_prompt + IMAGE_HANDLING_INSTRUCTION
 

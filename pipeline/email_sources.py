@@ -207,6 +207,87 @@ def extract_eml_parts(
         msg, file_path, process_attachment, emit_log, cancel_event)
 
 
+def _extract_msg_message(
+    msg,
+    file_path: Path,
+    process_attachment: Callable[[Path], str],
+    emit_log: Callable[[str, str], None],
+    cancel_event=None,
+) -> tuple[str, list[EmailAttachmentDocument]]:
+    """Estrae `(testo, allegati)` da un messaggio `extract_msg`. Condiviso tra
+    l'.msg top-level e i messaggi INCORPORATI (allegati di tipo messaggio): questi
+    ultimi espongono la stessa interfaccia, ma il loro `.data` e' un oggetto
+    `Message`, non `bytes`, quindi vanno espansi ricorsivamente invece di essere
+    scritti su file (era la causa del crash
+    "memoryview: a bytes-like object is required, not 'Message'")."""
+    parts: list[str] = []
+    header_map = [
+        ("Date", getattr(msg, "date", None)),
+        ("From", getattr(msg, "sender", None)),
+        ("To", getattr(msg, "to", None)),
+        ("Cc", getattr(msg, "cc", None)),
+        ("Subject", getattr(msg, "subject", None)),
+    ]
+    for label, value in header_map:
+        if value and str(value).strip():
+            parts.append(f"{label}: {value}")
+    if parts:
+        parts.append("")
+
+    body = getattr(msg, "body", None)
+    if body and body.strip():
+        parts.append(body)
+
+    att_list: list[tuple[str, bytes]] = []
+    embedded: list[tuple[str, str, list[EmailAttachmentDocument]]] = []
+    for attachment in msg.attachments:
+        if cancel_event and cancel_event.is_set():
+            break
+        name = (
+            getattr(attachment, "longFilename", None)
+            or getattr(attachment, "shortFilename", None)
+            or f"allegato_{len(att_list) + len(embedded) + 1}"
+        )
+        data = getattr(attachment, "data", None)
+        if data is None:
+            continue
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            att_list.append((name, bytes(data)))
+        elif hasattr(data, "attachments") and hasattr(data, "body"):
+            # Messaggio incorporato: espandilo ricorsivamente (corpo + suoi allegati).
+            sub_body, sub_atts = _extract_msg_message(
+                data, file_path, process_attachment, emit_log, cancel_event,
+            )
+            ename = name or "messaggio_incorporato"
+            if not ename.lower().endswith((".msg", ".eml")):
+                ename = f"{ename}.msg"
+            embedded.append((ename, sub_body, sub_atts))
+        else:
+            emit_log(
+                f"Allegato '{name}' di tipo non gestito "
+                f"({type(data).__name__}), saltato",
+                "WARNING",
+            )
+
+    attachment_docs = _process_attachment_list(
+        file_path, att_list, process_attachment, emit_log, cancel_event,
+    )
+    # I messaggi incorporati diventano documenti-allegato col testo gia' espanso
+    # (corpo + eventuali allegati annidati uniti). Indici in coda a quelli reali,
+    # per non collidere con i nomi file in modalita' "allegati separati".
+    next_index = max((doc.index for doc in attachment_docs), default=0) + 1
+    for ename, sub_body, sub_atts in embedded:
+        joined = join_email_and_attachments(sub_body, sub_atts)
+        if joined and joined.strip():
+            attachment_docs.append(EmailAttachmentDocument(
+                index=next_index,
+                filename=ename,
+                text=joined,
+            ))
+            next_index += 1
+    return "\n".join(parts), attachment_docs
+
+
 def extract_msg_parts(
     file_path: Path,
     process_attachment: Callable[[Path], str],
@@ -215,38 +296,7 @@ def extract_msg_parts(
 ) -> tuple[str, list[EmailAttachmentDocument]]:
     import extract_msg
 
-    parts: list[str] = []
-    att_list: list[tuple[str, bytes]] = []
-
     with extract_msg.openMsg(file_path) as msg:
-        header_map = [
-            ("Date", msg.date),
-            ("From", msg.sender),
-            ("To", msg.to),
-            ("Cc", msg.cc),
-            ("Subject", msg.subject),
-        ]
-        for label, value in header_map:
-            if value and str(value).strip():
-                parts.append(f"{label}: {value}")
-        if parts:
-            parts.append("")
-
-        body = msg.body
-        if body and body.strip():
-            parts.append(body)
-
-        for attachment in msg.attachments:
-            name = (
-                getattr(attachment, "longFilename", None)
-                or getattr(attachment, "shortFilename", None)
-                or f"allegato_{len(att_list) + 1}"
-            )
-            data = getattr(attachment, "data", None)
-            if data:
-                att_list.append((name, data))
-
-    attachment_docs = _process_attachment_list(
-        file_path, att_list, process_attachment, emit_log, cancel_event,
-    )
-    return "\n".join(parts), attachment_docs
+        return _extract_msg_message(
+            msg, file_path, process_attachment, emit_log, cancel_event,
+        )

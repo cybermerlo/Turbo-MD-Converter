@@ -1,4 +1,4 @@
-# Gemini API — Riferimento completo (aprile 2026)
+# Gemini API — Riferimento completo (luglio 2026)
 
 > **Nota (riferimento, non "come funziona il codice"):** l'app usa **solo**
 > `client.models.generate_content` (generateContent). Le sezioni su **Interactions
@@ -29,7 +29,7 @@ L'Interactions API è l'alternativa migliorata a `generate_content`. Gestisce st
 
 ```python
 interaction = client.interactions.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     input="Testo del prompt"
 )
 print(interaction.outputs[-1].text)
@@ -39,10 +39,10 @@ print(interaction.outputs[-1].text)
 
 ```python
 # Turno 1
-i1 = client.interactions.create(model="gemini-3-flash-preview", input="Mi chiamo Marco.")
+i1 = client.interactions.create(model="gemini-3.6-flash", input="Mi chiamo Marco.")
 # Turno 2 — passa solo il nuovo input
 i2 = client.interactions.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     input="Come mi chiamo?",
     previous_interaction_id=i1.id
 )
@@ -59,10 +59,10 @@ interaction = client.interactions.get("<ID>", include_input=True)  # include anc
 
 ```python
 history = [{"role": "user", "content": "Domanda 1"}]
-i1 = client.interactions.create(model="gemini-3-flash-preview", input=history)
+i1 = client.interactions.create(model="gemini-3.6-flash", input=history)
 history.append({"role": "model", "content": i1.outputs})
 history.append({"role": "user", "content": "Domanda 2"})
-i2 = client.interactions.create(model="gemini-3-flash-preview", input=history)
+i2 = client.interactions.create(model="gemini-3.6-flash", input=history)
 ```
 
 ---
@@ -124,7 +124,7 @@ def process_stream(stream):
             is_complete = True
 
 stream = client.interactions.create(
-    input="...", model="gemini-3-flash-preview",
+    input="...", model="gemini-3.6-flash",
     background=True, stream=True,
     agent_config={"type": "deep-research", "thinking_summaries": "auto"}
 )
@@ -168,7 +168,7 @@ weather_tool = {
 }
 
 interaction = client.interactions.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     input="Che tempo fa a Roma?",
     tools=[weather_tool]
 )
@@ -179,7 +179,7 @@ for output in interaction.outputs:
         result = my_dispatcher(output.name, output.args)
         # Inviare il risultato come turno successivo
         client.interactions.create(
-            model="gemini-3-flash-preview",
+            model="gemini-3.6-flash",
             previous_interaction_id=interaction.id,
             input=[{
                 "type": "function_result",
@@ -198,7 +198,7 @@ for output in interaction.outputs:
 
 ```python
 interaction = client.interactions.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     input="Elenca 3 capitali europee con popolazione.",
     generation_config={
         "response_mime_type": "application/json",
@@ -288,7 +288,7 @@ generation_config={
 
 ```python
 interaction = client.interactions.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     input="Controlla l'ultimo deployment.",
     tools=[{
         "type": "mcp_server",
@@ -302,15 +302,16 @@ interaction = client.interactions.create(
 
 ---
 
-## Modelli e agenti supportati (aprile 2026)
+## Modelli e agenti supportati (luglio 2026)
 
 ### Modelli di testo/multimodali
 
 | Model ID | Note | Tier |
 |---|---|---|
-| `gemini-3-flash-preview` | Veloce, smart, vision+audio | Free + Paid |
+| `gemini-3.6-flash` | Veloce + reasoning, vision+audio; ~17% output token in meno | Free + Paid |
+| `gemini-3.5-flash-lite` | Alto volume, ~2x più veloce del 3.1-lite, qualità superiore | Free + Paid |
 | `gemini-3.1-pro-preview` | Qualità massima | Solo Paid |
-| `gemini-3.1-flash-lite` | Più economico, task agentici | Free + Paid |
+| `gemini-3.1-flash-lite` | Il più economico, task agentici (GA fino a mag 2027) | Free + Paid |
 | `gemini-2.5-pro` | Coding/reasoning, 1M ctx | Free + Paid |
 | `gemini-2.5-flash` | Ragionamento ibrido, 1M ctx | Free + Paid |
 | `gemini-2.5-flash-lite` | Più piccolo/economico | Free + Paid |
@@ -345,11 +346,12 @@ interaction = client.interactions.create(
 
 ---
 
-## Prezzi (paid tier, USD per 1M token, aprile 2026)
+## Prezzi (paid tier, USD per 1M token, luglio 2026)
 
 | Modello | Input | Output |
 |---|---|---|
-| gemini-3-flash-preview | $0.50 (testo/img/video) | $3.00 |
+| gemini-3.6-flash | $1.50 (testo/img/video) | $7.50 |
+| gemini-3.5-flash-lite | $0.30 (testo/img/video) | $2.50 |
 | gemini-3.1-flash-lite | $0.25 | $1.50 |
 | gemini-3.1-pro-preview | $2.00 (≤200K) / $4.00 (>200K) | $12.00 / $18.00 |
 | gemini-2.5-pro | $1.25 (≤200K) / $2.50 (>200K) | $10.00 / $15.00 |
